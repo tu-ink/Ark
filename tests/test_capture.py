@@ -9,7 +9,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.dirname(__file__))   # 使 _util 可独立导入
 
 from arkids.capture import (FlowAnalyzer, PacketRecord, RawPcapReader,  # noqa: E402
-                            RawPcapngReader)
+                            RawPcapngReader, decode_any_frame)
+from arkids.sniffer import PcapWriter  # noqa: E402
 
 from _util import cleanup_tmp, make_tmp  # noqa: E402
 
@@ -166,6 +167,33 @@ class TestFlowAnalyzer(unittest.TestCase):
                                    flags="S", length=64))
         kinds = [d["kind"] for d in an.detections(t0 + 5)]
         self.assertIn("conn_burst", kinds)
+
+
+class TestRawIpAndSnifferWriter(unittest.TestCase):
+    def _raw(self):
+        # 原始套接字收到的是“裸 IP 报文”: 先包以太网帧再去除 14B 以太头得到
+        return eth_frame(MAC_A, MAC_B,
+                         ipv4_tcp("192.168.5.5", "10.0.0.2", 51000, 443, 0x12))[14:]
+
+    def test_decode_raw_ip(self):
+        rec = decode_any_frame(0.0, self._raw(), 101)
+        self.assertEqual((rec.src, rec.dst, rec.proto), ("192.168.5.5", "10.0.0.2", "tcp"))
+        self.assertEqual((rec.sport, rec.dport), ("51000", "443"))
+        self.assertIn("A", rec.flags)
+
+    def test_pcap_writer_roundtrip(self):
+        td = make_tmp("rawt")
+        p = os.path.join(td, "raw101.pcap")
+        w = PcapWriter(p, linktype=101)
+        ts = 1_700_000_000.5
+        w.write(ts, self._raw())
+        w.write(ts + 1.0, self._raw())
+        w.close()
+        recs = RawPcapReader().feed_file(p)
+        self.assertEqual(len(recs), 2)
+        self.assertEqual(recs[0].proto, "tcp")
+        self.assertAlmostEqual(recs[0].ts, ts, delta=0.01)
+        cleanup_tmp("rawt")
 
 
 if __name__ == "__main__":

@@ -124,7 +124,7 @@ python -m arkids dashboard --pcap a.pcapng --display-filter "tcp.port==443"
 
 | 模块 | 说明 |
 | --- | --- |
-| 数据源 | “实时抓包”选择本机网卡(tshark `-D`)或“回放文件”上传/选择真实 pcap；支持 tshark 捕获过滤器 `-f` 与显示过滤器 `-Y` |
+| 数据源 | “实时抓包”默认使用**自研内置引擎**(Windows 原始套接字/Linux AF_PACKET, 需管理员/root, 免装任何抓包工具)；也可切换“传统 tshark”模式(需装 Wireshark/Npcap)。回放文件支持真实 .pcap/.pcapng |
 | 🌐 实时网络拓扑 | 真实主机(私网/公网)连线图：线宽=真实流量、红=命中威胁；包速率/告警速率趋势 |
 | 📦 封包浏览 | 实时数据包表(时间/源/目标/协议/端口/TCP标志/长度)，本地搜索 + CSV 导出 |
 | ⚠ 威胁与处置 | 60s 流统计启发式检测：TCP SYN 洪泛、端口扫描、高连接速率(可解释证据)；一键“阻断源 IP”→ deny 规则 |
@@ -134,10 +134,9 @@ python -m arkids dashboard --pcap a.pcapng --display-filter "tcp.port==443"
 关键参数：`--auto-block` 开启“检测即自动加 deny 规则”（**默认关闭**，避免误伤真实业务）；
 实时抓包保存目录 `run/captures/`(自动落盘真实 pcap)；`--state-dir` 存放防火墙规则等状态。
 
-**Wireshark 联动**：检测到 tshark/Wireshark 后，工具栏显示引擎版本并可一键
-“用 Wireshark 打开”当前抓包接口或已保存/加载的真实文件复核。
-无 tshark 时：可安装 [Wireshark](https://www.wireshark.org/download.html)(含 Npcap、
-以管理员运行) 启用实时抓包；或使用“回放文件”模式(内置解析器直读 .pcap/.pcapng，无需 tshark)。
+**抓包引擎**：内置引擎(`--engine sniffer`, 默认)无需安装任何第三方工具，捕获本机全部
+IPv4 流量并以管理员身份运行；传统 tshark 引擎(`--engine tshark`)为可选，支持按网卡/
+捕获过滤器抓包。落盘的真实 .pcap 可一键“用 Wireshark 打开”复核(检测到 GUI 时)。
 
 **在线 LLM 研判（可选）**：设置 `DEEPSEEK_API_KEY`(Windows 系统凭据库
 `reasonix:DEEPSEEK_API_KEY` 也会自动读取，密钥不入库)；`ARKIDS_LLM_INSECURE=1` 可关闭

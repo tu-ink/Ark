@@ -145,7 +145,8 @@ def _cmd_dashboard(args: argparse.Namespace) -> None:
     if getattr(args, "no_browser", False):
         open_browser = False
     from .dashboard import DashboardService
-    svc = DashboardService(state_dir=str(state_dir))
+    svc = DashboardService(state_dir=str(state_dir),
+                           engine=getattr(args, "engine", "sniffer"))
     if args.auto_block:
         svc.monitor.auto_block = True
     if args.cap_filter:
@@ -155,7 +156,7 @@ def _cmd_dashboard(args: argparse.Namespace) -> None:
         if not res.get("ok"):
             print(f"[warn] 回放未启动: {res.get('error')}")
     elif args.interface:
-        res = svc.monitor.start_live(args.interface)
+        res = svc.monitor.start_live(args.interface, engine=args.engine)
         if not res.get("ok"):
             print(f"[warn] 抓包未启动: {res.get('error')}")
     svc.serve(args.host, args.port, open_browser=open_browser)
@@ -224,8 +225,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--state-dir", default="run")
     sp.set_defaults(func=_cmd_serve)
 
-    sp = sub.add_parser("dashboard", help="启动真实流量监控控制台(Wireshark/tshark 抓包, 真实 pcap 回放)")
-    sp.add_argument("--interface", default=None, help="实时抓包网卡(不指定则由 UI 选择)")
+    sp = sub.add_parser("dashboard", help="启动真实流量监控控制台(内置抓包引擎/回放真实 pcap)")
+    sp.add_argument("--engine", default="sniffer", choices=("sniffer", "tshark"),
+                    help="抓包引擎: sniffer=自研原始套接字(默认, 免安装); tshark=传统模式")
+    sp.add_argument("--interface", default=None,
+                    help="网卡(tshark 传统模式使用; 内置引擎忽略, 捕获全部 IPv4)")
     sp.add_argument("--pcap", default=None, help="回放真实抓包文件(.pcap/.pcapng)")
     sp.add_argument("--display-filter", default="", help="显示过滤器(tshark -Y, 回放时生效)")
     sp.add_argument("--cap-filter", default="", help="捕获过滤器(tshark -f, 实时抓包)")

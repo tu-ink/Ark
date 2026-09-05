@@ -176,9 +176,12 @@ class RawPcapReader:
         return out
 
     def _decode_packet(self, ts: float, pkt: bytes) -> PacketRecord | None:
+        if self._linktype != 1:
+            # 非以太网链路: RAW(101)/SLL(113) 等交给通用解码器
+            return decode_any_frame(ts, pkt, self._linktype)
         pr = PacketRecord(ts=ts)
-        if self._linktype != 1 or len(pkt) < 14:
-            pr.info = "非以太网帧(linktype=%d)或过短" % self._linktype
+        if len(pkt) < 14:
+            pr.info = "以太网帧过短"
             pr.length = len(pkt)
             return pr
         ethertype = int.from_bytes(pkt[12:14], "big")
@@ -276,6 +279,67 @@ def _decode_eth(ts: float, pkt: bytes, linktype: int) -> PacketRecord:
         pr.info = f"其它链路/ethertype=0x{ethertype:04x} len={len(pkt)}"
         pr.length = len(pkt)
     return pr
+
+
+def _decode_raw_ip(ts: float, pkt: bytes) -> PacketRecord:
+    """解码“裸 IP 报文”(原始套接字抓到的数据, 无以太网头)。"""
+    pr = PacketRecord(ts=ts, length=len(pkt))
+    if not pkt:
+        pr.info = "空包"
+        return pr
+    ver = pkt[0] >> 4
+    if ver == 4 and len(pkt) >= 20:
+        ihl = (pkt[0] & 0x0F) * 4
+        if len(pkt) < ihl:
+            pr.info = "IPv4 头不完整"
+            return pr
+        proto = pkt[9]
+        pr.src = ".".join(str(b) for b in pkt[12:16])
+        pr.dst = ".".join(str(b) for b in pkt[16:20])
+        pr.proto = {1: "icmp", 6: "tcp", 17: "udp"}.get(proto, f"ip-{proto}")
+        if proto == 6 and len(pkt) >= ihl + 20:
+            pr.sport = str(int.from_bytes(pkt[ihl:ihl + 2], "big"))
+            pr.dport = str(int.from_bytes(pkt[ihl + 2:ihl + 4], "big"))
+            flags = pkt[ihl + 13]
+            names = [(0x02, "S"), (0x10, "A"), (0x08, "P"), (0x01, "F"),
+                     (0x04, "R"), (0x20, "U")]
+            pr.flags = "".join(t for bit, t in names if flags & bit)
+            pr.info = f"TCP {pr.sport}→{pr.dport} flags={pr.flags or '-'}"
+        elif proto == 17 and len(pkt) >= ihl + 8:
+            pr.sport = str(int.from_bytes(pkt[ihl:ihl + 2], "big"))
+            pr.dport = str(int.from_bytes(pkt[ihl + 2:ihl + 4], "big"))
+            pr.info = f"UDP {pr.sport}→{pr.dport}"
+        elif proto == 1:
+            pr.info = "ICMP"
+        else:
+            pr.info = f"IPv4 proto={proto}"
+    elif ver == 6 and len(pkt) >= 40:
+        nxt = pkt[6]
+        pr.src = _fmt_ipv6(pkt[8:24])
+        pr.dst = _fmt_ipv6(pkt[24:40])
+        pr.proto = {1: "icmpv6", 6: "tcp", 17: "udp"}.get(nxt, "ipv6")
+        pr.info = "IPv6"
+    else:
+        pr.info = f"未知 IP 版本/长度(ver={ver})"
+    return pr
+
+
+def decode_any_frame(ts: float, pkt: bytes, linktype: int) -> PacketRecord:
+    """按链路类型解码: 1=以太网, 101=RAW(裸 IP), 113=SLL(Linux cooked)。"""
+    if linktype == 1:
+        return _decode_eth(ts, pkt, 1)
+    if linktype == 101:
+        return _decode_raw_ip(ts, pkt)
+    if linktype == 113 and len(pkt) >= 16:
+        ethertype = int.from_bytes(pkt[14:16], "big")
+        if ethertype in (0x0800, 0x86DD):
+            return _decode_raw_ip(ts, pkt[16:])
+        rec = PacketRecord(ts=ts, length=len(pkt))
+        rec.info = f"SLL ethertype=0x{ethertype:04x}"
+        return rec
+    rec = PacketRecord(ts=ts, length=len(pkt))
+    rec.info = f"未支持链路类型 linktype={linktype} len={len(pkt)}"
+    return rec
 
 
 def _reader_for(magic: bytes):
@@ -386,7 +450,7 @@ class RawPcapngReader:
         return self._decode(0.0, pkt, self._linktypes.get(0, 1))
 
     def _decode(self, ts: float, pkt: bytes, linktype: int) -> PacketRecord | None:
-        return _decode_eth(ts, pkt, linktype)
+        return decode_any_frame(ts, pkt, linktype)
 
     def feed_file(self, path: str | Path, limit: int = 0) -> list[PacketRecord]:
         out: list[PacketRecord] = []

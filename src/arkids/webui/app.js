@@ -8,6 +8,7 @@ const els = {
   verPill: $("verPill"), navThCnt: $("navThCnt"),
   modeLive: $("modeLive"), modePcap: $("modePcap"),
   paneLive: $("paneLive"), panePcap: $("panePcap"),
+  engineSel: $("engineSel"), engineNote: $("engineNote"),
   iface: $("iface"), btnRefreshIface: $("btnRefreshIface"), capFilter: $("capFilter"),
   btnStartLive: $("btnStartLive"), btnBrowseFile: $("btnBrowseFile"), pcapFile: $("pcapFile"),
   pcapPath: $("pcapPath"), dispFilter: $("dispFilter"), btnStartPcap: $("btnStartPcap"),
@@ -98,16 +99,17 @@ function applyMeta(m) {
   els.autoBlock2.checked = !!m.auto_block;
   // Wireshark 工具与提示
   const hasT = !!m.tools.tshark, hasW = !!m.tools.wireshark;
-  els.wsChip.textContent = hasT ? "tshark " + ((m.tools.tshark_version || "")
-    .replace(/^.*?(\d+\.\d+\.\d+).*$/, "$1")) : (st === "replay" || st === "replay_done"
-      ? "内置解析器(无需 tshark)" : "未装 tshark");
+  const usingBuiltin = (m.engine || "sniffer") === "sniffer";
+  if (usingBuiltin) {
+    els.wsChip.textContent = "内置抓包引擎 ✓" + (hasW ? " · Wireshark 可复核" : "");
+    els.wsChip.title = "自研原始套接字抓包, 无需安装 Wireshark/Npcap; 实时抓包需管理员";
+  } else {
+    els.wsChip.textContent = hasT ? "tshark " + ((m.tools.tshark_version || "")
+      .replace(/^.*?(\d+\.\d+\.\d+).*$/, "$1")) : "传统模式缺 tshark";
+  }
   els.btnWsOpen.disabled = !hasW;
   els.btnWsOpen.title = hasW ? "用 Wireshark 打开当前文件/接口" : "未检测到 Wireshark GUI";
-  if (!hasT && st === "idle" && !els.btnWsOpen.classList.contains("hint-shown")) {
-    // 首次提示一次, 引导到工具箱自检
-    toast("未检测到 tshark：可回放真实文件；实时抓包请到工具箱自检安装", "ok");
-    els.btnWsOpen.classList.add("hint-shown");
-  }
+  syncEngineUI();
 }
 function renderTop(snap) {
   const s = snap.stats || {};
@@ -133,7 +135,7 @@ function fillInterfaces(list) {
   els.iface.innerHTML = "";
   if (!list || !list.length) {
     const o = document.createElement("option");
-    o.value = ""; o.textContent = "无可用网卡(请以管理员运行)";
+    o.value = ""; o.textContent = "无可用网卡(请以管理员运行重试)";
     els.iface.appendChild(o);
     return;
   }
@@ -145,6 +147,14 @@ function fillInterfaces(list) {
     if (i.name === pref.name) o.selected = true;
     els.iface.appendChild(o);
   });
+}
+function syncEngineUI() {
+  const builtin = (els.engineSel.value || "sniffer") === "sniffer";
+  els.iface.classList.toggle("hidden", builtin);
+  els.btnRefreshIface.classList.toggle("hidden", builtin);
+  els.engineNote.textContent = builtin
+    ? "捕获本机全部 IPv4 流量 · 需管理员(右键以管理员运行) · 无需安装任何抓包工具"
+    : "传统模式需安装 Wireshark/Npcap; 捕获过滤器仅此模式生效(内置模式忽略)";
 }
 async function refreshMeta({ silent } = {}) {
   try {
@@ -167,14 +177,19 @@ function setMode(mode) {
   els.modePcap.classList.toggle("active", !live);
 }
 async function startLive() {
-  const iface = els.iface.value;
-  if (!iface) { toast("请先选择网卡(工具箱可自检)", ""); return; }
+  const engine = els.engineSel.value || "sniffer";
+  const body = { action: "start-live", engine };
+  if (engine === "tshark") {
+    if (!els.iface.value) { toast("传统模式请先选择网卡(可点“刷新”)", ""); return; }
+    body.interface = els.iface.value;
+  }
+  body.filter = els.capFilter.value.trim();
   els.btnStartLive.disabled = true;
   try {
-    const r = await postJson("/api/capture", { action: "start-live", interface: iface,
-      filter: els.capFilter.value.trim() });
+    const r = await postJson("/api/capture", body);
     if (!r.ok) { toast(r.error || "启动失败", ""); return; }
-    toast("已开始实时抓包(真实数据, 落盘 run/captures)", "ok");
+    toast(engine === "sniffer" ? "内置抓包引擎已启动(原始套接字, 真实数据落盘)"
+      : "tshark 抓包已启动", "ok");
   } catch (e) { toast("启动失败: " + e.message, ""); }
   finally { els.btnStartLive.disabled = false; }
 }
@@ -476,6 +491,13 @@ function bindEvents() {
     const r = await postJson("/api/capture", { action: "refresh" });
     fillInterfaces(r.interfaces || []); toast("网卡已刷新", "ok");
   });
+  els.engineSel.addEventListener("change", async () => {
+    syncEngineUI();
+    if (els.engineSel.value === "tshark") {
+      const r = await postJson("/api/capture", { action: "refresh" });
+      fillInterfaces(r.interfaces || []);
+    }
+  });
   els.autoBlock.addEventListener("change", () =>
     postJson("/api/capture", { action: "auto-block", enabled: els.autoBlock.checked }));
   els.autoBlock2.addEventListener("change", () => {
@@ -622,6 +644,7 @@ window.addEventListener("beforeunload", () => { try {
 (async function boot() {
   bindEvents();
   setMode("live");
+  syncEngineUI();
   await refreshMeta();
   await loadFirewall();
   refreshAdviceBadge();

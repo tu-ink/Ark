@@ -43,9 +43,14 @@
         <button id="modePcap" class="segbtn">回放文件</button>
       </div>
       <div class="srcpane" id="paneLive">
-        <select id="iface" title="选择网卡(实时抓包需 Npcap 与管理员)"><option>加载中…</option></select>
-        <button class="btn" id="btnRefreshIface" title="重新枚举网卡">刷新</button>
-        <input id="capFilter" placeholder="捕获过滤器, 如: tcp port 443" spellcheck="false">
+        <select id="engineSel" title="抓包引擎">
+          <option value="sniffer">内置抓包引擎(免安装工具)</option>
+          <option value="tshark">传统 tshark(可选)</option>
+        </select>
+        <span class="hint" id="engineNote">捕获本机全部 IPv4 流量 · 需要管理员权限(右键以管理员运行) · 无需安装 Wireshark/Npcap</span>
+        <select id="iface" title="tshark 模式选择网卡(内置模式忽略)" class="hidden"><option>内置模式无需选网卡</option></select>
+        <button class="btn" id="btnRefreshIface" title="tshark 模式刷新网卡(内置模式忽略)">刷新</button>
+        <input id="capFilter" placeholder="过滤器(tshark 模式生效), 如: tcp port 443" spellcheck="false">
         <button class="btn primary" id="btnStartLive">开始抓包</button>
       </div>
       <div class="srcpane hidden" id="panePcap">

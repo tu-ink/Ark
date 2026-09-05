@@ -51,10 +51,14 @@ def _fmt_ts(t: float) -> str:
 class LiveMonitor:
     """真实流量监控核心: 抓包线程 + 流分析 + 包/告警缓冲 + 采样。"""
 
-    def __init__(self, state_dir: str = "run") -> None:
+    def __init__(self, state_dir: str = "run", engine: str = "sniffer") -> None:
         self.tshark = find_tshark()
         self.wireshark = find_wireshark()
-        self.ifaces = list_interfaces(self.tshark)
+        self.engine = engine if engine in ("sniffer", "tshark") else "sniffer"
+        # 默认使用自研内置抓包引擎(免装 Wireshark/Npcap)
+        from .sniffer import sniff_interfaces
+        self.ifaces = list_interfaces(self.tshark) if self.engine == "tshark" \
+            else sniff_interfaces()
         self.fw = FirewallStore(state_dir=state_dir)
         self.advisor = AIAdvisor()
         self.source: CaptureSource | None = None
@@ -83,32 +87,47 @@ class LiveMonitor:
         self.replay_done = False
 
     # ------------------------------------------------------------- 生命周期
-    def start_live(self, interface: str | None = None) -> dict:
+    def start_live(self, interface: str | None = None,
+                   engine: str | None = None) -> dict:
+        engine = engine or self.engine
         if self.source and self.source.is_alive():
             return {"ok": False, "error": "已在抓包中, 请先停止"}
-        if self.tshark is None:
-            return {"ok": False,
-                    "error": "未找到 Wireshark/tshark。请安装 Wireshark(含 tshark 与 "
-                             "Npcap), 或改用“回放抓包文件”加载真实 pcap。"}
-        if not interface:
-            cands = [i["name"] for i in self.ifaces
-                     if "loopback" not in i["description"].lower()
-                     and "virtual" not in i["description"].lower()]
-            interface = cands[0] if cands else (self.ifaces[0]["name"] if self.ifaces else None)
-        if not interface:
-            return {"ok": False, "error": "未检测到可用网卡(可能需要管理员权限)。"}
         self._reset_analysis()
         self.mode = "live"
-        self.source_label = f"实时抓包: {interface}"
-        self.cap_filter = self.cap_filter
-        self.source = CaptureSource(
-            mode="live", target=interface, cap_filter=self.cap_filter,
-            tshark=self.tshark, save_dir=str(DEFAULT_SAVE_DIR),
-            on_record=self._on_record, on_error=self._on_error)
+        self.engine = engine
+        if engine == "tshark":
+            # 传统模式(可选): 依赖 Wireshark/tshark + Npcap
+            if self.tshark is None:
+                return {"ok": False,
+                        "error": "未找到 tshark。传统模式需安装 Wireshark/Npcap; "
+                                 "建议改用默认的内置抓包引擎(免安装)。"}
+            self.ifaces = list_interfaces(self.tshark)
+            if not interface:
+                cands = [i["name"] for i in self.ifaces
+                         if "loopback" not in i["description"].lower()
+                         and "virtual" not in i["description"].lower()]
+                interface = cands[0] if cands else \
+                    (self.ifaces[0]["name"] if self.ifaces else None)
+            if not interface:
+                return {"ok": False,
+                        "error": "未检测到可用网卡(tshark -D 为空, 可能缺 Npcap/管理员)。"}
+            self.source_label = f"tshark 抓包: {interface}"
+            self.source = CaptureSource(
+                mode="live", target=interface, cap_filter=self.cap_filter,
+                tshark=self.tshark, save_dir=str(DEFAULT_SAVE_DIR),
+                on_record=self._on_record, on_error=self._on_error)
+        else:
+            # 默认: 自研内置抓包引擎(原始套接字, 免第三方工具)
+            from .sniffer import SnifferCapture
+            self.source_label = ("内置抓包引擎(本机全部 IPv4 流量"
+                                 " · 原始套接字, 免安装工具)")
+            self.source = SnifferCapture(
+                save_dir=str(DEFAULT_SAVE_DIR),
+                on_record=self._on_record, on_error=self._on_error)
         self.source.start()
         self._start_watcher()
         self.saved_path = ""
-        return {"ok": True, "mode": "live", "interface": interface}
+        return {"ok": True, "mode": "live", "engine": engine}
 
     def start_pcap(self, path: str, display_filter: str = "") -> dict:
         if self.source and self.source.is_alive():
@@ -224,8 +243,10 @@ class LiveMonitor:
                                                  protocol="any",
                                                  note="自动联动: " + d["kind"],
                                                  source="auto"))
-            if self.saved_path and self.source.mode == "live" and self.source.saved_path:
-                self.saved_path = self.source.saved_path
+            if self.source.mode == "live":
+                sp = getattr(self.source, "saved_path", None)
+                if sp:
+                    self.saved_path = sp
 
     # ------------------------------------------------------------- 快照
     def meta(self) -> dict:
@@ -242,6 +263,7 @@ class LiveMonitor:
             status = "idle"
         return {
             "mode": self.mode,
+            "engine": self.engine,
             "status": status,
             "version": ARKIDS_VERSION,
             "source": self.source_label,
@@ -416,50 +438,51 @@ class LiveMonitor:
             probe.unlink(missing_ok=True)
         except Exception:
             writable = False
+        is_admin = self._is_admin()
         items: list[dict] = [
             {"id": "app", "name": "ArkIDS 应用", "ok": True,
              "detail": f"版本 {__version__} · Python {__import__('sys').version.split()[0]}",
              "help": ""},
-            {"id": "tshark", "name": "Wireshark/tshark 引擎",
-             "ok": bool(self.tshark),
-             "detail": (f"{self.tshark} ({tshark_version(self.tshark)})" if self.tshark
-                        else "未安装 —— 实时抓包不可用, 文件回放仍可用内置解析器"),
-             "url": "https://www.wireshark.org/download.html"},
-            {"id": "npcap", "name": "Npcap 抓包驱动(实时抓包必需)",
-             "ok": self._npcap_present(),
-             "detail": "已检测到" if self._npcap_present() else
-             "未检测到 —— 请安装 Npcap(实时抓包必需, 文件回放不需要)",
-             "url": "https://npcap.com/"},
-            {"id": "wireshark_gui", "name": "Wireshark GUI(复核工具)",
-             "ok": bool(self.wireshark),
-             "detail": str(self.wireshark) if self.wireshark else "未安装(可选, 用于打开抓包复核)",
-             "url": "https://www.wireshark.org/download.html"},
-            {"id": "interfaces", "name": "本机网卡枚举",
-             "ok": len(self.ifaces) > 0,
-             "detail": ("；".join(i["name"] for i in self.ifaces[:5])
-                        if self.ifaces else "无可用网卡(请以管理员运行重试)"),
+            {"id": "sniffer", "name": "内置抓包引擎(自研原始套接字)",
+             "ok": True,
+             "detail": ("Windows 原始套接字(SIO_RCVALL)/Linux AF_PACKET 已内置, "
+                        "无需安装 Wireshark/Npcap 等任何抓包工具; "
+                        "实时抓包需管理员/root"),
              "help": ""},
-            {"id": "priv", "name": "管理员权限(实时抓包建议)",
-             "ok": self._is_admin(),
-             "detail": "当前为管理员运行" if self._is_admin()
-             else "非管理员 —— 抓包可能因权限受限(文件回放不受影响)",
+            {"id": "priv", "name": "管理员权限(内置实时抓包需要)",
+             "ok": is_admin,
+             "detail": "当前为管理员运行" if is_admin
+             else "非管理员 —— 内置实时抓包会失败, 文件回放不受影响; 请右键“以管理员身份运行”",
+             "help": ""},
+            {"id": "optional_tshark", "name": "可选: tshark/Npcap 传统模式",
+             "ok": True,
+             "detail": ("已检测 tshark " + (self.tshark.name if self.tshark else "未装") +
+                        " · 传统模式为可选项, 不装也完全可用内置引擎"),
+             "url": "https://www.wireshark.org/download.html" if not self.tshark else ""},
+            {"id": "wireshark_gui", "name": "可选: Wireshark GUI 复核",
+             "ok": True,
+             "detail": str(self.wireshark) if self.wireshark
+             else "未安装(可选, 仅用于人工复核抓包文件)",
+             "url": "https://www.wireshark.org/download.html" if not self.wireshark else ""},
+            {"id": "scope", "name": "抓包范围(内置引擎)",
+             "ok": True,
+             "detail": "本机全部 IPv4 出入站流量(含回环); 传统 tshark 模式可按网卡选择",
              "help": ""},
             {"id": "storage", "name": "数据/状态目录可写",
              "ok": writable,
              "detail": str(DEFAULT_SAVE_DIR) if writable else "目录不可写, 请检查磁盘/权限",
              "help": ""},
-            {"id": "parser", "name": "真实文件解析器(内置 pcap/pcapng)",
+            {"id": "parser", "name": "真实文件解析器(内置 pcap/pcapng/RAW)",
              "ok": True,
-             "detail": "RawPcapReader / RawPcapngReader 已就绪(支持大小端)",
+             "detail": "RawPcapReader / RawPcapngReader / RAW(101) 解码已就绪(支持大小端)",
              "help": ""},
         ]
         ok_n = sum(1 for x in items if x["ok"])
         blocked = [x["name"] for x in items if not x["ok"] and
-                   x["id"] in ("tshark", "npcap", "storage")]
+                   x["id"] in ("priv", "storage")]
         return {"items": items, "ok_count": ok_n, "total": len(items),
                 "all_ok": ok_n == len(items),
-                "live_ready": bool(self.tshark and self._npcap_present()
-                                  and self.ifaces),
+                "live_ready": bool(is_admin),
                 "diagnostic": " | ".join(f"{x['id']}={'OK' if x['ok'] else 'WARN'}"
                                          for x in items)}
 
@@ -569,7 +592,8 @@ class _Handler(BaseHTTPRequestHandler):
             if action == "start-live":
                 if body.get("filter") is not None:
                     m.cap_filter = str(body["filter"])
-                self._json(m.start_live(body.get("interface")))
+                self._json(m.start_live(body.get("interface"),
+                                        body.get("engine") or m.engine))
             elif action == "start-pcap":
                 m.display_filter = str(body.get("display_filter", ""))
                 self._json(m.start_pcap(str(body.get("file", "")),
@@ -665,8 +689,8 @@ class _Handler(BaseHTTPRequestHandler):
 class DashboardService:
     """启动参数仅为 UI 层引导; 真正数据由 LiveMonitor 从真实来源采集。"""
 
-    def __init__(self, state_dir: str = "run") -> None:
-        self.monitor = LiveMonitor(state_dir=state_dir)
+    def __init__(self, state_dir: str = "run", engine: str = "sniffer") -> None:
+        self.monitor = LiveMonitor(state_dir=state_dir, engine=engine)
 
     def serve(self, host: str = "127.0.0.1", port: int = 8642,
               open_browser: bool = False) -> None:

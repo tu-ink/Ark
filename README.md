@@ -15,7 +15,7 @@ ArkIDS（`arkids`）以标准评测集 **NSL-KDD** 的数据模式（41 维流�
 - **工程化**：版本单一来源、标准 pyproject 元数据、console 入口 `arkids`、
   wheel / PyInstaller exe 打包、应用图标与 favicon（详见 docs/packaging.md）。
 
-**当前版本：v0.5.0** · License: MIT · [CHANGELOG](CHANGELOG.md)
+**当前版本：v0.6.0** · License: MIT · [CHANGELOG](CHANGELOG.md)
 
 ## 快速开始
 
@@ -23,14 +23,14 @@ ArkIDS（`arkids`）以标准评测集 **NSL-KDD** 的数据模式（41 维流�
 
 发布产物在 `dist/`（或 GitHub Releases）：
 - `ArkIDS.exe`（单文件）：**双击即启动可视化控制台并自动打开浏览器**；
-- `ArkIDS-0.5.0-win64.zip`：目录版 + 说明/授权/图标。
+- `ArkIDS-0.6.0-win64.zip`：目录版 + 说明/授权/图标。
 
 ### B. 源码 / 开发者模式（Python ≥ 3.9）
 
 ```bash
 # 1) 安装依赖或直接安装 wheel
 pip install -r requirements.txt
-# 或: pip install dist/arkids-0.5.0-py3-none-any.whl   (安装后可直接用 arkids 命令)
+# 或: pip install dist/arkids-0.6.0-py3-none-any.whl   (安装后可直接用 arkids 命令)
 
 # 2) 一键演示: 生成演示数据 + 训练 + 仿真闭环
 python -m arkids demo            # 需要 PYTHONPATH=src (或安装为包后直接运行)
@@ -58,6 +58,7 @@ Ark/
 │   ├── detector.py        #   流式检测引擎(置信度决策)
 │   ├── defense.py         #   智能防御引擎(证据累积/封禁/规则)
 │   ├── capture.py         #   真实流量采集: tshark/pcap 解析 + 启发式检测
+│   ├── sniffer.py         #   自研抓包引擎: 原始套接字抓包 + pcap 落盘(免第三方工具)
 │   ├── firewall.py        #   防火墙规则库(在线编辑/脚本导出)
 │   ├── advisor.py         #   AI 智能建议(规则引擎 + 可选 LLM)
 │   ├── dashboard.py       #   可视化控制台服务(真实流量监控 + API)
@@ -93,21 +94,21 @@ python -m arkids dashboard --pcap capture.pcap          # 直接回放真实抓�
 python -m arkids dashboard --interface "以太网"          # 直接对指定网卡抓包
 ```
 
-- **抓包链路 = 内嵌 Wireshark 工具**：实时抓包由 tshark 以“原始字节管道”驱动
-  （`tshark -i <网卡> -F pcap -w -`），系统内建解析器逐包解码并**同步落盘真实 .pcap**；
-  界面可一键“用 Wireshark 打开”当前抓包/文件做人工复核（检测到 GUI 时自动启用）。
-  支持捕获过滤器(tshark `-f`)与显示过滤器(tshark `-Y`)。
+- **抓包引擎(默认自研, 免第三方工具)**：不再依赖 Wireshark/Npcap —— 内置
+  `SnifferCapture` 用 Windows 原始套接字(SIO_RCVALL)/Linux AF_PACKET 直接采集
+  本机真实流量(需管理员/root), 原始报文同步落盘 .pcap(链路 101=RAW/1=Ethernet)。
+  可选保留“传统 tshark”引擎(界面下拉切换, 未安装也可完全使用)。落盘文件仍可一键
+  “用 Wireshark 打开”人工复核(检测到 GUI 时启用)。文件回放支持真实 .pcap/.pcapng。
 - **🌐 实时网络拓扑**：从真实数据包聚合的“内网主机(私网) ↔ 外网主机(公网)”连线图，
   线宽按真实包量、红色连线表示命中威胁的主机，附包速率/告警速率趋势；
-- **封包浏览**：实时数据包表(时间/源/目标/协议/端口/TCP标志/长度)，支持本地搜索与 CSV 导出；
+- **封包浏览**：实时数据包表(时间/源/目标/协议/端口/TCP标志/长度)，支持搜索与 CSV 导出；
 - **威胁与处置**：基于 60s 流统计的启发式检测(SYN 洪泛/端口扫描/高连接速率)给出可解释证据，
   支持“阻断源 IP”一键加入 deny 规则(默认**不**自动封禁，误伤可控)；
 - **🤖 AI 研判**：离线规则引擎给出处置建议；配置 `DEEPSEEK_API_KEY` 后可调用大模型对
   真实态势做综合研判（密钥不入库、失败自动回退）。
 
-> 实时抓包需要本机安装 [Wireshark](https://www.wireshark.org/download.html)
-> （含 tshark 与 Npcap）并以管理员运行；无 tshark 时仍可用“回放抓包文件”模式：
-> 系统内置解析器直接读取真实 .pcap/.pcapng 文件(含大端序变体)。
+> 内置实时抓包只需【管理员身份运行】(Windows 原始套接字/Linux root), **无需安装任何
+> 抓包软件**；非管理员时仍可用“回放抓包文件”模式加载真实 .pcap/.pcapng(内置解析器)。
 > 离线算法实验(NSL-KDD/合成演示 + 训练/评估)属于另一条研究链路，请使用
 > `arkids train|simulate` 命令，与本监控模式分离。
 

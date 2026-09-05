@@ -13,7 +13,8 @@
     models     模型训练/评估与持久化
     detector   流式检测引擎(阈值/置信度决策)
     defense    智能防御引擎(证据累积/封禁/规则)
-    capture    真实流量采集: tshark/pcap 解析 + 启发式检测(不构造数据)
+    capture    真实流量采集/解析: pcap/pcapng/RAW 解码 + 启发式检测(不构造数据)
+    sniffer    自研抓包引擎(原始套接字, 免 Wireshark/Npcap) + 自产 pcap 落盘
     firewall   防火墙规则库(在线编辑/脚本导出)
     advisor    AI 智能建议(规则引擎 + 可选 LLM)
     dashboard  可视化监控服务(真实流量监控 + API)

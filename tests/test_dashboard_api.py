@@ -116,8 +116,9 @@ class TestDashboardApi(unittest.TestCase):
         self.assertEqual(sc["total"], 8)
         self.assertTrue(sc["diagnostic"].startswith("app=OK"))
         kinds = {x["id"] for x in sc["items"]}
-        self.assertIn("tshark", kinds)
+        self.assertIn("sniffer", kinds)
         self.assertIn("parser", kinds)
+        self.assertIn("priv", kinds)
         logs = self._get("/api/logs?kind=detections&n=50")
         self.assertIn("rows", logs)
         self.assertIsInstance(logs["rows"], list)
