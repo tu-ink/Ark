@@ -210,6 +210,17 @@
           <ul class="chklist" id="extList"><li class="empty">正在扫描工作区工具…</li></ul>
         </div>
         <div class="panel">
+          <h2>抓包排错(深度, 区分“权限/驱动/无流量”)
+            <button class="btn small" id="btnDiag">开始排错</button>
+            <button class="btn small" id="btnDiagCopy" disabled>复制报告</button>
+          </h2>
+          <p class="note">逐项检测 Npcap 驱动 / 管理员权限 / tshark 引擎 / 接口枚举，
+             并对 3 个候选接口各做 2 秒真实抓包，给出结论与修复步骤(约 6–10 秒)。</p>
+          <div class="chkhead warn" id="diagHead">尚未运行排错</div>
+          <ul class="chklist" id="diagList"><li class="empty">点击“开始排错”…</li></ul>
+          <div class="note" id="diagAdvice"></div>
+        </div>
+        <div class="panel">
           <h2>关于</h2>
           <dl class="about">
             <dt>应用</dt><dd>ArkIDS(基于人工智能的网络攻击智能检测与防御)</dd>

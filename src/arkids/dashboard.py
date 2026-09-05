@@ -32,6 +32,17 @@ EXT_TOOLS = ExtTools()   # 外部安全工具联动(进程级缓存)
 MIME = {".html": "text/html; charset=utf-8", ".js": "application/javascript; charset=utf-8",
         ".css": "text/css; charset=utf-8", ".ico": "image/x-icon"}
 
+def subprocess_run_quiet(cmd: list[str]) -> str:
+    """运行命令并返回合并输出(UTF-8 容错), 失败返回错误文本。"""
+    import subprocess as _sp
+    try:
+        r = _sp.run(cmd, capture_output=True, timeout=8)
+        out = (r.stdout or b"") + (r.stderr or b"")
+        return out.decode("utf-8", errors="replace")
+    except Exception as exc:  # noqa: BLE001
+        return str(exc)
+
+
 INTERNAL_PREFIX = ("10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.",
                    "172.2", "127.", "169.254.", "::1", "fe80:", "fd", "fc")
 
@@ -502,6 +513,107 @@ class LiveMonitor:
                 "diagnostic": " | ".join(f"{x['id']}={'OK' if x['ok'] else 'WARN'}"
                                          for x in items)}
 
+    # ------------------------------------------------------------- 深度抓包排错
+    def diag_capture(self, full: bool = True) -> dict:
+        import re as _re
+        from .capture import probe_interfaces_for_traffic  # noqa: PLC0415
+        items: list[dict] = []
+        is_admin = self._is_admin()
+        npcap_drv = Path("C:/Windows/System32/drivers/npcap.sys").exists()
+        items.append({"name": "Npcap 驱动(实时抓包底层)", "ok": npcap_drv,
+                      "detail": "已检测到 npcap.sys" if npcap_drv else "未检测到 Npcap 驱动",
+                      "fix": "安装 Npcap(见 npcap.com)" if not npcap_drv else ""})
+        items.append({"name": "管理员权限(抓包建议)", "ok": is_admin,
+                      "detail": "当前以管理员运行" if is_admin
+                      else "当前非管理员 —— 若 Npcap 限制非管理员抓包则会失败",
+                      "fix": "右键本程序 → 以管理员身份运行" if not is_admin else ""})
+        items.append({"name": "Wireshark/tshark 引擎", "ok": bool(self.tshark),
+                      "detail": f"{self.tshark} ({tshark_version(self.tshark)})"
+                      if self.tshark else "未找到 tshark",
+                      "fix": "检查工作区 Wireshark 目录" if not self.tshark else ""})
+        ifaces = list_interfaces(self.tshark) or []
+        items.append({"name": "接口枚举(tshark -D)", "ok": len(ifaces) > 0,
+                      "detail": f"共 {len(ifaces)} 个: " +
+                                ("；".join(f"{i['description'] or i['name']}"
+                                           for i in ifaces[:4]))
+                      if ifaces else "无接口(缺 Npcap/驱动权限)",
+                      "fix": "" if ifaces else "安装 Npcap 或以管理员运行"})
+
+        tests: list[dict] = []
+        reason = ""
+        advice = ""
+        if full and self.tshark and ifaces:
+            # 真实短抓验证: 挑前 3 个“可能活跃”的接口逐个试 2 秒
+            DEFAULT_SAVE_DIR.mkdir(parents=True, exist_ok=True)
+            ranked = probe_interfaces_for_traffic(self.tshark, ifaces, per_sec=1.5)
+            ranked = [x for x in ranked if "loopback" not in x["description"].lower()]
+            for it in ranked[:3]:
+                proc = subprocess_run_quiet([str(self.tshark), "-i", it["name"],
+                                             "-q", "-c", "30", "-a", "duration:2",
+                                             "-w", str(DEFAULT_SAVE_DIR / "diag.pcap")])
+                msg = proc or ""
+                m = _re.search(r"(\d+)\s+packets captured", msg)
+                pk = int(m.group(1)) if m else 0
+                low = msg.lower()
+                if pk > 0:
+                    state_code = "ok"
+                elif any(k in low for k in ("permission denied", "requires admin",
+                                            "administrator", "拒绝访问")):
+                    state_code = "denied"
+                elif any(k in low for k in ("no such device", "unable to open",
+                                            "cannot open", "device", "找不到")):
+                    state_code = "no_device"
+                elif "capturing on" in low:
+                    state_code = "no_traffic"
+                else:
+                    state_code = "unknown"
+                tests.append({"interface": it["name"],
+                              "desc": it["description"], "packets": pk,
+                              "state": state_code,
+                              "error": msg.strip().splitlines()[-1][:200]
+                              if msg.strip() else ""})
+            good = [t for t in tests if t["state"] == "ok"]
+            if good:
+                reason = "ok"
+                advice = f"抓包链路可用(接口 {good[0]['interface']})。"
+            else:
+                denied = [t for t in tests if t["state"] == "denied"]
+                nod = [t for t in tests if t["state"] == "no_device"]
+                nof = [t for t in tests if t["state"] == "no_traffic"]
+                if denied:
+                    reason = "权限受限"
+                    advice = ("Npcap 抓包被权限拒绝: 请以管理员身份运行本程序; 若已管理员, "
+                              "请在 Npcap 安装选项中勾选 Allow non-admin capture, 或重装 Npcap。")
+                elif nod:
+                    reason = "驱动/接口异常"
+                    advice = ("接口无法打开, 可能 Npcap 与 Wireshark 位数不一致或驱动异常; "
+                              "建议重装 Npcap 并确认 64 位。")
+                elif nof:
+                    reason = "接口无流量"
+                    advice = ("所选接口 2s 内无任何包: 请换有流量的网卡, 或用“回放真实文件”"
+                              "验证; 既然 Wireshark 可抓包, 请选与 Wireshark 一致的接口。")
+                else:
+                    reason = "未知原因"
+                    advice = "见上方原始输出; 可用 Wireshark GUI 手动比对同一接口。"
+        elif not full:
+            # 快速模式(界面自检): 依据环境静态推断
+            if npcap_drv and self.tshark and ifaces and not is_admin:
+                reason, advice = "疑似权限", \
+                    "Npcap 已装且接口正常; 非管理员运行可能被限制 —— 请以管理员身份运行。"
+            elif npcap_drv and self.tshark and ifaces and is_admin:
+                reason, advice = "待实测", "驱动与权限均就绪, 点“开始抓包”观察是否收包。"
+            else:
+                reason, advice = "环境不齐", \
+                    "请补齐: Npcap 驱动 / tshark(Wireshark) / 管理员权限。"
+        items.append({"name": "实时抓包实测(3 个接口 × 2s)",
+                      "ok": reason == "ok" or any(t["packets"] > 0 for t in tests),
+                      "detail": "；".join(f"{t['desc'] or t['interface']}={t['packets']}包"
+                                          f"({'OK' if t['state']=='ok' else t['state']})"
+                                          for t in tests) or "未执行",
+                      "fix": advice})
+        return {"items": items, "tests": tests, "ok": reason == "ok",
+                "reason": reason, "advice": advice}
+
     # ------------------------------------------------------------- 日志导出
     def logs(self, kind: str = "detections", n: int = 3000) -> list[dict]:
         if kind == "packets":
@@ -561,6 +673,9 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/ext-tools":
             refresh = self._query().get("refresh", ["0"])[0] == "1"
             self._json({"tools": EXT_TOOLS.list(refresh=refresh)})
+        elif path == "/api/diag/capture":
+            full = self._query().get("full", ["1"])[0] == "1"
+            self._json(svc.monitor.diag_capture(full=full))
         elif path == "/api/firewall":
             self._json(svc.monitor.fw.rules())
         elif path == "/api/firewall/script":
@@ -603,6 +718,18 @@ class _Handler(BaseHTTPRequestHandler):
             tool_id = str(body.get("id", ""))
             file_path = str(body.get("file", "") or "")
             self._json(EXT_TOOLS.open(tool_id, file_path))
+        elif path == "/api/diag/elevate":
+            import sys as _sys
+            if m._is_admin():
+                self._json({"ok": True, "admin": True,
+                            "message": "当前已具备管理员权限。"})
+            else:
+                cmd = (f'"{_sys.executable}" dashboard --port 8642'
+                       if getattr(_sys, "frozen", False)
+                       else "python -m arkids dashboard --port 8642")
+                self._json({"ok": True, "admin": False, "cmd": cmd,
+                            "message": "请关闭本程序后右键“以管理员身份运行”(UAC 点“是”)。"
+                                       "或复制命令到管理员终端执行。"})
         elif path == "/api/sample":
             name = str(body.get("name", "")).strip()
             res = m.fetch_sample(name)

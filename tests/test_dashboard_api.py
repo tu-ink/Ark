@@ -131,6 +131,13 @@ class TestDashboardApi(unittest.TestCase):
             self.assertIn("found", t)
             self.assertIn("name", t)
 
+    def test_diag_capture_quick(self):
+        d = self._get("/api/diag/capture?full=0")
+        self.assertIn("items", d)
+        self.assertIn("reason", d)
+        self.assertIn("ok", d)
+        self.assertGreaterEqual(len(d["items"]), 4)
+
 
 if __name__ == "__main__":
     unittest.main()

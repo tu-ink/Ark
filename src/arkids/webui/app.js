@@ -28,6 +28,8 @@ const els = {
   btnSelfcheck: $("btnSelfcheck"), chkHead: $("chkHead"), chkList: $("chkList"),
   btnCopyDiag: $("btnCopyDiag"), sampleBtns: $("sampleBtns"), sampleNote: $("sampleNote"),
   btnReloadExt: $("btnReloadExt"), extList: $("extList"),
+  btnDiag: $("btnDiag"), btnDiagCopy: $("btnDiagCopy"),
+  diagHead: $("diagHead"), diagList: $("diagList"), diagAdvice: $("diagAdvice"),
   btnExpPkt: $("btnExpPkt"), btnExpTh: $("btnExpTh"),
   aboutVer: $("aboutVer"), aboutTools: $("aboutTools"), llmBadge: $("llmBadge"),
   btnResetSession: $("btnResetSession"), logoMark: $("logoMark"),
@@ -529,6 +531,43 @@ async function loadExtTools() {
   } catch (e) { console.warn("ext", e); }
 }
 
+async function runDiag() {
+  els.btnDiag.disabled = true;
+  els.diagHead.className = "chkhead warn";
+  els.diagHead.textContent = "正在深度排错(约 6–10s)…";
+  els.diagList.innerHTML = "<li class='empty'>测试中…</li>";
+  els.diagAdvice.textContent = "";
+  try {
+    const d = await api("/api/diag/capture?full=1");
+    state.diag = d;
+    els.diagHead.className = "chkhead " + (d.ok ? "ok" : "warn");
+    els.diagHead.textContent = d.ok ? "✓ 抓包链路可用"
+      : (d.reason ? "结论: " + d.reason : "存在异常");
+    els.diagList.innerHTML = "";
+    (d.items || []).forEach((it) => {
+      const li = document.createElement("li");
+      li.className = it.ok ? "ok" : "warn";
+      li.innerHTML = `<div class="row"><span class="mark">${it.ok ? "✓" : "!"}</span>` +
+        `<div><b>${esc(it.name)}</b><span class="det">${esc(it.detail || "")}</span>` +
+        (it.fix ? `<div class="det">建议: ${esc(it.fix)}</div>` : "") +
+        `</div></div>`;
+      els.diagList.appendChild(li);
+    });
+    els.diagAdvice.textContent = d.advice ? "建议：" + d.advice : "";
+    els.btnDiagCopy.disabled = false;
+  } catch (e) {
+    els.diagList.innerHTML = "<li class='warn'>排错失败: " + esc(e.message) + "</li>";
+  } finally { els.btnDiag.disabled = false; }
+}
+function diagText() {
+  const d = state.diag;
+  if (!d) return "尚未运行排错";
+  const lines = (d.items || []).map((i) =>
+    `${i.ok ? "[OK]" : "[!] "}${i.name}: ${i.detail || ""}${i.fix ? " | 建议: " + i.fix : ""}`);
+  lines.push("结论: " + (d.reason || "未知") + " | " + (d.advice || ""));
+  return lines.join("\n");
+}
+
 /* ===================================================== 事件绑定 */
 function bindEvents() {
   els.modeLive.addEventListener("click", () => setMode("live"));
@@ -589,6 +628,13 @@ function bindEvents() {
   });
   // 工具箱
   els.btnSelfcheck.addEventListener("click", runSelfcheck);
+  els.btnDiag.addEventListener("click", runDiag);
+  els.btnDiagCopy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(diagText());
+      toast("排错报告已复制", "ok");
+    } catch (e) { toast("复制失败: " + e.message, ""); }
+  });
   els.btnReloadExt.addEventListener("click", async () => {
     await api("/api/ext-tools?refresh=1");
     await loadExtTools();
