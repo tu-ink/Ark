@@ -22,6 +22,7 @@ from .capture import (CaptureSource, PacketRecord, find_tshark, find_wireshark,
                       list_interfaces, open_capture_file, tshark_version)
 from .config import PROJECT_ROOT
 from .firewall import FirewallRule, FirewallStore
+from .version import __version__ as ARKIDS_VERSION
 
 WEBUI_DIR = Path(__file__).resolve().parent / "webui"
 DEFAULT_SAVE_DIR = PROJECT_ROOT / "run" / "captures"
@@ -79,6 +80,7 @@ class LiveMonitor:
         self._last_dets = 0
         self._packets_buf: deque[float] = deque(maxlen=240)
         self._dets_buf: deque[float] = deque(maxlen=240)
+        self.replay_done = False
 
     # ------------------------------------------------------------- 生命周期
     def start_live(self, interface: str | None = None) -> dict:
@@ -130,10 +132,10 @@ class LiveMonitor:
         return {"ok": True, "mode": "pcap", "file": str(p)}
 
     def stop(self) -> dict:
+        self._watchdog_stop.set()
         if self.source:
             self.source.stop()
             self.source = None
-        self._watchdog_stop.set()
         self.mode = "idle"
         return {"ok": True}
 
@@ -151,6 +153,7 @@ class LiveMonitor:
         self._dets_buf.clear()
         self.started_at = time.time()
         self.last_error = ""
+        self.replay_done = False
 
     def _on_error(self, msg: str) -> None:
         self.last_error = msg
@@ -184,9 +187,17 @@ class LiveMonitor:
             time.sleep(1.0)
             if self.source is None or not self.source.is_alive():
                 if self.source is not None:
-                    self._on_error(self.source.last_error or "采集已结束")
+                    finished_pcap = (self.source.mode == "pcap"
+                                     and self.analyzer.counter["packets"] > 0)
+                    if finished_pcap:
+                        self.replay_done = True
+                        self.mode = "pcap"          # 显示“回放已完成”
+                        self.last_error = ""
+                    else:
+                        self._on_error(self.source.last_error or "采集已结束")
+                        if self.mode != "pcap":
+                            self.mode = "idle"
                     self.source = None
-                    self.mode = "idle"
                 continue
             now = time.time()
             # 速率采样
@@ -219,11 +230,23 @@ class LiveMonitor:
     # ------------------------------------------------------------- 快照
     def meta(self) -> dict:
         src = self.source
+        capturing = bool(src and src.is_alive())
+        # 面向 UI 的状态文案: idle / live / pcap(回放中) / replay_done / error
+        if capturing:
+            status = "live" if self.mode == "live" else "replay"
+        elif self.mode == "pcap" and self.replay_done:
+            status = "replay_done"
+        elif self.mode == "error" or self.last_error:
+            status = "error"
+        else:
+            status = "idle"
         return {
             "mode": self.mode,
+            "status": status,
+            "version": ARKIDS_VERSION,
             "source": self.source_label,
             "last_error": self.last_error,
-            "capturing": bool(src and src.is_alive()),
+            "capturing": capturing,
             "started_at": self.started_at,
             "packets_captured": self.analyzer.counter["packets"],
             "saved_path": self.saved_path,
@@ -348,6 +371,129 @@ class LiveMonitor:
                 "fw_rules": self.fw.rules(),
                 "mode": self.mode, "source": self.source_label}
 
+    # ------------------------------------------------------------- 环境自检
+    @staticmethod
+    def _is_admin() -> bool:
+        try:
+            import ctypes
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _npcap_present() -> bool:
+        if Path("C:/Windows/System32/drivers/npcap.sys").exists():
+            return True
+        for p in ("C:/Windows/System32/Npcap", "C:/Windows/SysWOW64/Npcap"):
+            if Path(p).exists():
+                return True
+        try:
+            import ctypes
+            advapi = ctypes.windll.advapi32
+            SC_MANAGER_CONNECT = 0x0001
+            SERVICE_QUERY_STATUS = 0x0004
+            h = advapi.OpenSCManagerW(None, None, SC_MANAGER_CONNECT)
+            if not h:
+                return False
+            try:
+                svc = advapi.OpenServiceW(h, "npcap", SERVICE_QUERY_STATUS)
+                if svc:
+                    advapi.CloseServiceHandle(svc)
+                    return True
+            finally:
+                advapi.CloseServiceHandle(h)
+            return False
+        except Exception:
+            return False
+
+    def selfcheck(self) -> dict:
+        from .version import __version__
+        writable = True
+        try:
+            probe = DEFAULT_SAVE_DIR / ".probe"
+            probe.parent.mkdir(parents=True, exist_ok=True)
+            probe.write_text("ok")
+            probe.unlink(missing_ok=True)
+        except Exception:
+            writable = False
+        items: list[dict] = [
+            {"id": "app", "name": "ArkIDS 应用", "ok": True,
+             "detail": f"版本 {__version__} · Python {__import__('sys').version.split()[0]}",
+             "help": ""},
+            {"id": "tshark", "name": "Wireshark/tshark 引擎",
+             "ok": bool(self.tshark),
+             "detail": (f"{self.tshark} ({tshark_version(self.tshark)})" if self.tshark
+                        else "未安装 —— 实时抓包不可用, 文件回放仍可用内置解析器"),
+             "url": "https://www.wireshark.org/download.html"},
+            {"id": "npcap", "name": "Npcap 抓包驱动(实时抓包必需)",
+             "ok": self._npcap_present(),
+             "detail": "已检测到" if self._npcap_present() else
+             "未检测到 —— 请安装 Npcap(实时抓包必需, 文件回放不需要)",
+             "url": "https://npcap.com/"},
+            {"id": "wireshark_gui", "name": "Wireshark GUI(复核工具)",
+             "ok": bool(self.wireshark),
+             "detail": str(self.wireshark) if self.wireshark else "未安装(可选, 用于打开抓包复核)",
+             "url": "https://www.wireshark.org/download.html"},
+            {"id": "interfaces", "name": "本机网卡枚举",
+             "ok": len(self.ifaces) > 0,
+             "detail": ("；".join(i["name"] for i in self.ifaces[:5])
+                        if self.ifaces else "无可用网卡(请以管理员运行重试)"),
+             "help": ""},
+            {"id": "priv", "name": "管理员权限(实时抓包建议)",
+             "ok": self._is_admin(),
+             "detail": "当前为管理员运行" if self._is_admin()
+             else "非管理员 —— 抓包可能因权限受限(文件回放不受影响)",
+             "help": ""},
+            {"id": "storage", "name": "数据/状态目录可写",
+             "ok": writable,
+             "detail": str(DEFAULT_SAVE_DIR) if writable else "目录不可写, 请检查磁盘/权限",
+             "help": ""},
+            {"id": "parser", "name": "真实文件解析器(内置 pcap/pcapng)",
+             "ok": True,
+             "detail": "RawPcapReader / RawPcapngReader 已就绪(支持大小端)",
+             "help": ""},
+        ]
+        ok_n = sum(1 for x in items if x["ok"])
+        blocked = [x["name"] for x in items if not x["ok"] and
+                   x["id"] in ("tshark", "npcap", "storage")]
+        return {"items": items, "ok_count": ok_n, "total": len(items),
+                "all_ok": ok_n == len(items),
+                "live_ready": bool(self.tshark and self._npcap_present()
+                                  and self.ifaces),
+                "diagnostic": " | ".join(f"{x['id']}={'OK' if x['ok'] else 'WARN'}"
+                                         for x in items)}
+
+    # ------------------------------------------------------------- 日志导出
+    def logs(self, kind: str = "detections", n: int = 3000) -> list[dict]:
+        if kind == "packets":
+            return [p for p in list(self.packets)[-n:]]
+        return [d for d in list(self.detections)[:n]]
+
+    # ------------------------------------------------------------- 官方样例
+    SAMPLES = {
+        "dhcp.pcapng": "https://gitlab.com/wireshark/wireshark/-/raw/master/test/captures/dhcp.pcapng",
+        "dhcp_big_endian.pcapng": "https://gitlab.com/wireshark/wireshark/-/raw/master/test/captures/dhcp_big_endian.pcapng",
+        "comments.pcapng": "https://gitlab.com/wireshark/wireshark/-/raw/master/test/captures/comments.pcapng",
+    }
+
+    def fetch_sample(self, name: str) -> dict:
+        url = self.SAMPLES.get(name)
+        if not url:
+            return {"ok": False, "error": "未知样例"}
+        import ssl as _ssl
+        import urllib.request as _ur
+        try:
+            ctx = _ssl._create_unverified_context()  # 兼容受限网络环境
+            data = _ur.urlopen(_ur.Request(url,
+                                           headers={"User-Agent": "arkids-selfcheck"}),
+                               timeout=60, context=ctx).read()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"下载失败(需联网): {exc}"}
+        target = DEFAULT_SAVE_DIR / "samples" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        return {"ok": True, "path": str(target), "bytes": len(data)}
+
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "ArkIDS-Dashboard/0.1"
@@ -367,6 +513,12 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/packets":
             n = int(self._query().get("n", ["300"])[0])
             self._json({"packets": list(svc.monitor.packets)[-n:]})
+        elif path == "/api/logs":
+            kind = self._query().get("kind", ["detections"])[0]
+            n = int(self._query().get("n", ["3000"])[0])
+            self._json({"kind": kind, "rows": svc.monitor.logs(kind, n)})
+        elif path == "/api/selfcheck":
+            self._json(svc.monitor.selfcheck())
         elif path == "/api/firewall":
             self._json(svc.monitor.fw.rules())
         elif path == "/api/firewall/script":
@@ -405,7 +557,14 @@ class _Handler(BaseHTTPRequestHandler):
         if body is None:
             return
         m = svc.monitor
-        if path == "/api/capture":
+        if path == "/api/sample":
+            name = str(body.get("name", "")).strip()
+            res = m.fetch_sample(name)
+            if res.get("ok"):
+                replay = m.start_pcap(res["path"], m.display_filter)
+                res["replay"] = replay
+            self._json(res)
+        elif path == "/api/capture":
             action = body.get("action")
             if action == "start-live":
                 if body.get("filter") is not None:
@@ -423,6 +582,11 @@ class _Handler(BaseHTTPRequestHandler):
             elif action == "refresh":
                 m.ifaces = list_interfaces(m.tshark)
                 self._json({"ok": True, "interfaces": m.ifaces})
+            elif action == "reset":
+                m.stop()
+                m._reset_analysis()
+                m.ifaces = list_interfaces(m.tshark)
+                self._json({"ok": True, "reset": True})
             else:
                 self._json({"error": "unknown action"}, code=400)
         elif path == "/api/tools/open":

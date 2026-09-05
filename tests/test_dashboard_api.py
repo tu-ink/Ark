@@ -111,5 +111,17 @@ class TestDashboardApi(unittest.TestCase):
         self.assertEqual(snap["packets"][0]["proto"], "udp")
 
 
+    def test_selfcheck_and_logs_endpoints(self):
+        sc = self._get("/api/selfcheck")
+        self.assertEqual(sc["total"], 8)
+        self.assertTrue(sc["diagnostic"].startswith("app=OK"))
+        kinds = {x["id"] for x in sc["items"]}
+        self.assertIn("tshark", kinds)
+        self.assertIn("parser", kinds)
+        logs = self._get("/api/logs?kind=detections&n=50")
+        self.assertIn("rows", logs)
+        self.assertIsInstance(logs["rows"], list)
+
+
 if __name__ == "__main__":
     unittest.main()
