@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ArkIDS · AI 网络攻防可视化控制台</title>
+<title>ArkIDS · 真实流量智能监控</title>
 <link rel="icon" href="favicon.ico" type="image/x-icon">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -12,97 +12,148 @@
   <div class="brand">
     <span class="logo">🛡</span>
     <div>
-      <h1>ArkIDS 智能攻防态势控制台</h1>
-      <p class="sub">基于人工智能的网络攻击智能检测与防御 · 实时可视化</p>
+      <h1>ArkIDS 真实流量智能监控</h1>
+      <p class="sub">Wireshark/tshark 抓包 · 实时流分析 · AI 研判(数据全部来自真实网络)</p>
     </div>
   </div>
-  <div class="threat" id="threatBox">
-    <span id="threatLabel">—</span>
-  </div>
-  <div class="ctrl">
-    <button id="btnPause" class="btn">⏸ 暂停</button>
-    <button id="btnSpeed" class="btn" title="点击切换回放速率">速率 40/s</button>
-  </div>
-  <div class="kpis" id="kpis">
-    <div class="kpi"><label>流量</label><b id="kFlows">0</b></div>
-    <div class="kpi"><label>告警</label><b id="kAlerts" class="warn">0</b></div>
-    <div class="kpi"><label>封禁</label><b id="kBlocks" class="danger">0</b></div>
-    <div class="kpi"><label>攻击率</label><b id="kRate">0%</b></div>
-    <div class="kpi"><label>检出率</label><b id="kRecall">—</b></div>
+  <div class="statechip" id="modeChip" title="当前数据源状态">空闲</div>
+  <div class="threat" id="threat">安全</div>
+  <div class="kpis">
+    <div class="kpi"><label>数据包</label><b id="kPkts">0</b></div>
+    <div class="kpi"><label>速率 pps</label><b id="kPps">0</b></div>
+    <div class="kpi"><label>活跃连接</label><b id="kFlows">0</b></div>
+    <div class="kpi"><label>威胁告警</label><b id="kDet" class="warn">0</b></div>
+    <div class="kpi"><label>严重威胁</label><b id="kCrit" class="danger">0</b></div>
   </div>
 </header>
 
+<section class="sourcebar" id="sourcebar">
+  <div class="seg" role="tablist">
+    <button id="modeLive" class="seg-btn active">● 实时抓包</button>
+    <button id="modePcap" class="seg-btn">◫ 回放抓包文件</button>
+  </div>
+
+  <div class="src-pane" id="paneLive">
+    <select id="iface" title="选择本机网卡(需 Npcap/管理员)"></select>
+    <button class="btn" id="btnRefresh" title="重新枚举网卡">↻</button>
+    <input id="capFilter" placeholder="捕获过滤器(可选) 如 tcp port 80" size="24">
+    <button class="btn primary" id="btnStart">▶ 开始抓包</button>
+  </div>
+
+  <div class="src-pane hidden" id="panePcap">
+    <button class="btn" id="btnBrowse">📂 选择 pcap 文件</button>
+    <input id="pcapText" readonly placeholder="未选择(支持 .pcap/.pcapng)" size="30">
+    <input type="file" id="pcapFile" accept=".pcap,.pcapng,.cap" hidden>
+    <input id="dispFilter" placeholder="显示过滤器(可选) 如 tcp.port==80" size="22">
+    <button class="btn primary" id="btnStartPcap">▶ 回放</button>
+  </div>
+
+  <button class="btn danger hidden" id="btnStop">■ 停止</button>
+  <label class="chk" title="检测命中时自动给源 IP 添加 deny 规则(可能误伤, 慎用)">
+    <input type="checkbox" id="autoBlock"> 自动联动 deny 规则
+  </label>
+
+  <span class="spacer"></span>
+  <span class="ws-chip" id="wsChip">…</span>
+  <button class="btn" id="btnWsOpen" disabled title="用 Wireshark GUI 打开当前接口/抓包">开 Wireshark</button>
+  <button class="btn" id="btnSave" disabled title="当前真实抓包文件路径">保存文件</button>
+</section>
+
+<div class="hintbox hidden" id="toolsHint"></div>
+
 <main class="layout">
-  <!-- 左: 实时攻防网络图 -->
-  <section class="panel net">
-    <h2>🌐 实时攻防网络 <span class="hint" id="netLegend"></span></h2>
-    <div class="canvas-wrap">
-      <canvas id="net" width="900" height="460"></canvas>
-      <div class="toast-layer" id="toasts"></div>
-    </div>
-    <div class="sparkbox"><canvas id="spark" width="900" height="64"></canvas></div>
-  </section>
-
-  <!-- 中: 攻击日志 -->
-  <section class="panel log">
-    <h2>📋 攻击日志
-      <span class="tools">
-        <select id="logFilter"><option value="">全部</option>
-          <option value="attack">仅攻击</option>
-          <option value="block">仅封禁</option>
-          <option value="dos">DoS</option>
-          <option value="probe">Probe</option>
-          <option value="r2l">R2L</option>
-          <option value="u2r">U2R</option>
-        </select>
-        <button id="btnClearLog" class="btn mini">清空视图</button>
-      </span>
-    </h2>
-    <div class="table-scroll">
-      <table id="logTable">
-        <thead><tr><th>#</th><th>时间</th><th>源IP</th><th>目标</th><th>判决</th><th>置信度</th><th>动作</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- 右: AI 建议 + 防火墙 -->
-  <aside class="right">
-    <section class="panel ai">
-      <h2>🤖 AI 智能建议 <span class="badge" id="llmBadge">规则引擎</span></h2>
-      <div id="adviceList" class="advice-list"></div>
-      <div class="ai-ask">
-        <textarea id="aiQuestion" rows="2" placeholder="追问 AI(可选, 如: 下一步如何处理?)"></textarea>
-        <button id="btnAskAi" class="btn primary">🔮 生成 AI 深度建议</button>
+  <section class="leftcol">
+    <div class="panel net">
+      <h2>🌐 实时网络拓扑 <span class="hint" id="netHint"></span></h2>
+      <div class="canvas-wrap">
+        <canvas id="net" width="960" height="440"></canvas>
+        <div class="toast-layer" id="toasts"></div>
       </div>
-      <div id="aiAnswer" class="ai-answer hidden"></div>
-    </section>
+      <div class="sparkbox"><canvas id="spark" width="960" height="56"></canvas>
+        <span class="legend">外部(公网) → 内部(私网) 连线宽度=流量; 红线=命中威胁</span>
+      </div>
+    </div>
 
-    <section class="panel fw">
-      <h2>🧱 防火墙规则编辑器
-        <button id="btnScript" class="btn mini">查看脚本</button>
-      </h2>
-      <form id="fwForm" class="fw-form" autocomplete="off">
-        <input id="fwSrc" placeholder="源IP, 如 203.0.113.66" required>
+    <div class="panel tabs-panel">
+      <div class="tabs">
+        <button class="tab active" data-tab="packets">封包浏览</button>
+        <button class="tab" data-tab="threats">威胁与处置<span class="cnt" id="thCnt"></span></button>
+        <button class="tab" data-tab="flows">连接明细</button>
+      </div>
+
+      <div class="tab-body" id="tab-packets">
+        <div class="toolrow">
+          <input id="pktSearch" placeholder="搜索: 源/目标/协议/端口/标志(S、A…)" size="34">
+          <button class="btn mini" id="btnPktExport">导出 CSV</button>
+          <span class="hint" id="pktStat"></span>
+        </div>
+        <div class="table-scroll"><table>
+          <thead><tr><th>#</th><th>时间</th><th>源</th><th>目标</th><th>协议</th>
+            <th>源端口</th><th>目标端口</th><th>标志</th><th>长度</th></tr></thead>
+          <tbody id="pktBody"></tbody>
+        </table></div>
+        <div class="empty hidden" id="pktEmpty">等待真实流量… 请在上方开始抓包或回放文件。</div>
+      </div>
+
+      <div class="tab-body hidden" id="tab-threats">
+        <div class="toolrow">
+          <select id="thLevel"><option value="">全部级别</option><option value="critical">严重</option>
+            <option value="warning">警告</option><option value="info">提示</option></select>
+          <span class="hint">检测基于真实流量的流统计启发式(窗口 60s), 提供可解释证据。</span>
+          <button class="btn mini" id="btnThExport">导出 CSV</button>
+        </div>
+        <div class="table-scroll"><table>
+          <thead><tr><th>时间</th><th>级别</th><th>类型</th><th>事件与依据</th>
+            <th>置信</th><th>处置</th></tr></thead>
+          <tbody id="thBody"></tbody>
+        </table></div>
+        <div class="empty hidden" id="thEmpty">当前未检测到异常流量。</div>
+      </div>
+
+      <div class="tab-body hidden" id="tab-flows">
+        <div class="toolrow"><span class="hint">活跃五元组连接(60s 窗口, 按包数排序)</span></div>
+        <div class="hostchips" id="hostsRow"></div>
+        <div class="table-scroll"><table>
+          <thead><tr><th>源</th><th>目标</th><th>协议</th><th>端口</th>
+            <th>包数</th><th>字节</th><th>SYN</th></tr></thead>
+          <tbody id="flowBody"></tbody>
+        </table></div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="rightcol">
+    <div class="panel ai">
+      <h2>🤖 AI 研判与建议 <span class="badge" id="llmBadge">规则引擎</span></h2>
+      <div class="advice-list" id="aiList"></div>
+      <div class="ai-ask">
+        <textarea id="aiQ" rows="2" placeholder="追问 AI(可选): 例如“分析当前告警并给出处置优先级”"></textarea>
+        <button class="btn primary" id="btnLLM">🔮 生成 AI 研判</button>
+      </div>
+      <div class="ai-answer hidden" id="aiAns"></div>
+    </div>
+
+    <div class="panel fw">
+      <h2>🧱 防火墙规则(处置台) <button class="btn mini" id="btnScript">脚本预览</button></h2>
+      <form id="fwForm" autocomplete="off" class="fw-form">
+        <input id="fwSrc" placeholder="源 IP(或从威胁一键带入)" required>
         <select id="fwAction"><option value="deny">deny 阻断</option><option value="allow">allow 放行</option></select>
         <select id="fwProto"><option value="any">any</option><option value="tcp">tcp</option>
           <option value="udp">udp</option><option value="icmp">icmp</option></select>
-        <input id="fwPort" placeholder="端口(可选)" size="6">
-        <input id="fwNote" placeholder="备注(可选)">
+        <input id="fwPort" placeholder="端口" size="5">
         <button type="submit" class="btn primary">添加规则</button>
       </form>
-      <div class="table-scroll short">
-        <table id="fwTable">
-          <thead><tr><th>动作</th><th>源IP</th><th>协议/端口</th><th>来源</th><th>状态</th><th></th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
+      <div class="table-scroll short"><table>
+        <thead><tr><th>动作</th><th>源IP</th><th>协议/端口</th><th>来源</th><th>状态</th><th></th></tr></thead>
+        <tbody id="fwBody"></tbody>
+      </table></div>
       <pre id="fwScript" class="hidden"></pre>
-    </section>
+    </div>
   </aside>
 </main>
 
-<footer class="foot">ArkIDS · AI 检测模型(五分类) + 证据累积自动防御 · 数据为离线演示/仿真回放</footer>
+<footer class="foot">数据真实性说明：本控制台只消费“本机网卡实时抓包”或“用户提供的真实抓包文件”，不生成/不播放仿真流量；
+检测为可解释启发式流分析；AI 建议 = 本地规则引擎 + 可选大模型。离线仿真演示请使用 <code>arkids simulate</code> 命令。</footer>
 <script src="app.js"></script>
 </body>
 </html>

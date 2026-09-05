@@ -1,13 +1,12 @@
-"""可视化 Dashboard: 实时攻防网络仿真 + Web 界面 + REST API。
+"""可视化监控服务: 真实流量采集 → 实时分析 → Web 控制台。
 
-功能:
-    - 实时攻防网络图: 攻击源(203.0.113.x)/内网用户(10.10.0.x) -> 业务服务器
-      (192.168.1.10) 的流量关系, 由前端的 canvas 动画绘制;
-    - 防火墙在线编辑: 增删/启停 deny 规则并同步导出防火墙脚本;
-    - 攻击日志: 检测事件/告警/自动封禁流水;
-    - AI 智能建议: 规则引擎(离线可用) + 可选 LLM(DeepSeek)增强。
+数据来源(真实, 不构造):
+    1) 本机网卡实时抓包: tshark(内嵌 Wireshark 命令行引擎) `-F pcap -w -`
+       → 内建 RawPcapReader 解析, 同步落盘真实 .pcap;
+    2) 用户提供的真实抓包文件(.pcap/.pcapng): tshark 转码回放, 或纯内建解析。
+无 tshark / 未选源时界面显示“等待真实流量”, 不播放任何仿真数据。
 
-运行: python -m arkids dashboard --model models/arkids_rf.joblib --port 8642
+运行: python -m arkids dashboard [--interface eth0 | --pcap file.pcap]
 """
 from __future__ import annotations
 
@@ -18,290 +17,420 @@ from collections import Counter, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import pandas as pd
-
 from .advisor import AIAdvisor
-from .config import DATA_DIR, KDD_FEATURES, LABEL_COL, is_attack
-from .dataset import generate_demo_flows
-from .defense import DefenseEngine, DefenseEvent
-from .detector import FlowDetector
+from .capture import (CaptureSource, PacketRecord, find_tshark, find_wireshark,
+                      list_interfaces, open_capture_file, tshark_version)
+from .config import PROJECT_ROOT
 from .firewall import FirewallRule, FirewallStore
 
 WEBUI_DIR = Path(__file__).resolve().parent / "webui"
-DEFAULT_DATA = DATA_DIR / "demo_eval.csv"
-SERVER_IP = "192.168.1.10"
-USER_POOL = 6
+DEFAULT_SAVE_DIR = PROJECT_ROOT / "run" / "captures"
 MIME = {".html": "text/html; charset=utf-8", ".js": "application/javascript; charset=utf-8",
-        ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml",
-        ".ico": "image/x-icon"}
+        ".css": "text/css; charset=utf-8", ".ico": "image/x-icon"}
+
+INTERNAL_PREFIX = ("10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.",
+                   "172.2", "127.", "169.254.", "::1", "fe80:", "fd", "fc")
 
 
-def _mk_event(seq: int, src: str, verdict: str, score: float,
-              attack: bool, truth: bool | None, ts: float) -> dict:
-    return {"seq": seq, "ts": ts, "src": src, "dst": SERVER_IP,
-            "verdict": verdict, "score": round(float(score), 4),
-            "attack": bool(attack), "truth": truth, "action": None}
+def _is_internal(ip: str) -> bool:
+    if not ip:
+        return True
+    if ip.startswith("172."):
+        try:
+            return 16 <= int(ip.split(".")[1]) <= 31
+        except (IndexError, ValueError):
+            return True
+    return ip.startswith(INTERNAL_PREFIX) or ip == "::"
 
 
-class LiveEngine:
-    """后台仿真线程: 持续回放流量, 驱动检测与防御, 维护可查询的态势状态。"""
+def _fmt_ts(t: float) -> str:
+    return time.strftime("%H:%M:%S", time.localtime(t)) + f".{int((t % 1) * 1000):03d}"
 
-    def __init__(self, model_path: str, data_path: str | None = None,
-                 threshold: float = 0.5, attacker_pool: int = 5,
-                 block_hits: int = 3, window_sec: float = 60.0,
-                 state_dir: str = "run", seed: int = 7, speed: float = 40.0) -> None:
-        self.detector = FlowDetector.load(model_path, threshold=threshold)
-        self.engine = DefenseEngine(state_dir=state_dir, block_hits=block_hits,
-                                    window_sec=window_sec)
+
+class LiveMonitor:
+    """真实流量监控核心: 抓包线程 + 流分析 + 包/告警缓冲 + 采样。"""
+
+    def __init__(self, state_dir: str = "run") -> None:
+        self.tshark = find_tshark()
+        self.wireshark = find_wireshark()
+        self.ifaces = list_interfaces(self.tshark)
         self.fw = FirewallStore(state_dir=state_dir)
-        self.advisor = AIAdvisor(threshold=threshold)
-        self.attacker_pool = attacker_pool
-        self.speed = float(speed)
-        self.paused = False
-        self.seq = 0
-        self.flows: pd.DataFrame | None = None
-        self._load_data(data_path)
-        # 状态容器
+        self.advisor = AIAdvisor()
+        self.source: CaptureSource | None = None
+        self.mode = "idle"            # idle | live | pcap | error
+        self.last_error = ""
+        self.cap_filter = ""
+        self.display_filter = ""
+        self.auto_block = False
+        self.saved_path = ""
+        self.source_label = ""
+        self.started_at: float | None = None
         self._lock = threading.Lock()
-        self.events: deque[dict] = deque(maxlen=600)
-        self.ip_state: dict[str, dict] = {}
-        self.spark: deque[dict] = deque(maxlen=120)
-        self.counters = {"flows": 0, "alerts": 0, "blocks": 0,
-                         "tp": 0, "fp": 0, "tn": 0, "fn": 0}
-        self._last_spark_ts = time.time()
-        self._thread: threading.Thread | None = None
+        self.packets: deque[dict] = deque(maxlen=600)
+        self.detections: deque[dict] = deque(maxlen=250)
+        self.samples: deque[dict] = deque(maxlen=240)
+        self.seq = 0
+        self._watchdog_stop = threading.Event()
+        self._watcher: threading.Thread | None = None
+        from .capture import FlowAnalyzer  # noqa: PLC0415
+        self.analyzer = FlowAnalyzer(window_sec=60.0)
+        self._last_sample_ts = time.time()
+        self._last_packets = 0
+        self._last_dets = 0
+        self._packets_buf: deque[float] = deque(maxlen=240)
+        self._dets_buf: deque[float] = deque(maxlen=240)
 
-    def _load_data(self, data_path: str | None) -> None:
-        if data_path and Path(data_path).exists():
-            df = pd.read_csv(data_path)
-        else:
-            df = generate_demo_flows(n=1200, seed=1234)  # 内存兜底
-        if LABEL_COL in df.columns:
-            self.truth: list[bool | None] = [bool(is_attack(v)) for v in df[LABEL_COL]]
-        else:
-            self.truth = [None] * len(df)
-        self.flows = df.reset_index(drop=True)
-        self._flow_index = 0
-        self._row_index = 0  # 用于轮换正常用户与攻击源
+    # ------------------------------------------------------------- 生命周期
+    def start_live(self, interface: str | None = None) -> dict:
+        if self.source and self.source.is_alive():
+            return {"ok": False, "error": "已在抓包中, 请先停止"}
+        if self.tshark is None:
+            return {"ok": False,
+                    "error": "未找到 Wireshark/tshark。请安装 Wireshark(含 tshark 与 "
+                             "Npcap), 或改用“回放抓包文件”加载真实 pcap。"}
+        if not interface:
+            cands = [i["name"] for i in self.ifaces
+                     if "loopback" not in i["description"].lower()
+                     and "virtual" not in i["description"].lower()]
+            interface = cands[0] if cands else (self.ifaces[0]["name"] if self.ifaces else None)
+        if not interface:
+            return {"ok": False, "error": "未检测到可用网卡(可能需要管理员权限)。"}
+        self._reset_analysis()
+        self.mode = "live"
+        self.source_label = f"实时抓包: {interface}"
+        self.cap_filter = self.cap_filter
+        self.source = CaptureSource(
+            mode="live", target=interface, cap_filter=self.cap_filter,
+            tshark=self.tshark, save_dir=str(DEFAULT_SAVE_DIR),
+            on_record=self._on_record, on_error=self._on_error)
+        self.source.start()
+        self._start_watcher()
+        self.saved_path = ""
+        return {"ok": True, "mode": "live", "interface": interface}
 
-    # ------------------------------------------------------------- 仿真推进
-    def _next_row(self):
-        """返回 (row, truth, idx); 数据为空时返回 (None, None, -1)。"""
-        df = self.flows
-        if df is None or len(df) == 0:
-            return None, None, -1
-        if self._flow_index >= len(df):
-            self._flow_index = 0
-            self._row_index += 100000  # 每轮更换端点分配, 产生“新会话”
-        row = df.iloc[self._flow_index]
-        idx = self._flow_index + self._row_index
-        truth = self.truth[self._flow_index] if self.truth else None
-        self._flow_index += 1
-        return row, truth, idx
+    def start_pcap(self, path: str, display_filter: str = "") -> dict:
+        if self.source and self.source.is_alive():
+            return {"ok": False, "error": "正在抓包/回放, 请先停止"}
+        p = Path(path)
+        if not p.exists():
+            return {"ok": False, "error": f"文件不存在: {path}"}
+        if not p.suffix.lower() in (".pcap", ".pcapng", ".cap"):
+            return {"ok": False, "error": "请选择 .pcap/.pcapng 抓包文件"}
+        self._reset_analysis()
+        self.mode = "pcap"
+        self.source_label = f"回放文件: {p.name}"
+        self.display_filter = display_filter
+        self.source = CaptureSource(
+            mode="pcap", target=str(p), display_filter=display_filter,
+            tshark=self.tshark, save_dir=None,
+            on_record=self._on_record, on_error=self._on_error)
+        self.source.start()
+        self._start_watcher()
+        self.saved_path = str(p)
+        return {"ok": True, "mode": "pcap", "file": str(p)}
 
-    def _endpoints(self, attack: bool, idx: int) -> str:
-        if attack:
-            return f"203.0.113.{10 + idx % self.attacker_pool}"
-        return f"10.10.0.{1 + idx % USER_POOL}"
+    def stop(self) -> dict:
+        if self.source:
+            self.source.stop()
+            self.source = None
+        self._watchdog_stop.set()
+        self.mode = "idle"
+        return {"ok": True}
 
-    def tick(self) -> dict | None:
-        """产生并处理 1 条流, 返回事件字典(无数据返回 None)。"""
-        row, truth, idx = self._next_row()
-        if row is None:
-            return None
-        flow = {c: row[c] for c in KDD_FEATURES}
-        det = self.detector.detect_one(flow)
-        src = self._endpoints(det.attack, idx)
-        ev = self.events
+    def _reset_analysis(self) -> None:
         with self._lock:
-            self.seq += 1
-            self.counters["flows"] += 1
-            if truth is True:
-                self.counters["tp" if det.attack else "fn"] += 1
-            elif truth is False:
-                self.counters["tn" if not det.attack else "fp"] += 1
-            stamp = time.time()
-            record = _mk_event(self.seq, src, det.verdict, det.score,
-                               det.attack, truth, stamp)
-            defense_ev = DefenseEvent(src_ip=src, dst_ip=SERVER_IP,
-                                      verdict=det.verdict, score=det.score,
-                                      attack=det.attack, ts=stamp)
-            engine_out = self.engine.handle(defense_ev)
-            if engine_out and engine_out.get("action") == "block":
-                record["action"] = "block"
-                self.counters["blocks"] += 1
-                # 自动封禁 -> 同步到防火墙规则库
-                self.fw.add(FirewallRule(src_ip=src, action="deny", protocol="any",
-                                         note="AI防御自动封禁", source="auto"))
-                self._bump_ip(src, det, attack=True, blocked=True, stamp=stamp)
-            else:
-                if det.attack:
-                    self.counters["alerts"] += 1
-                self._bump_ip(src, det, attack=det.attack, blocked=False, stamp=stamp)
-            self.events.append(record)
-            # 每秒追加一个态势采样点
-            now = time.time()
-            if now - self._last_spark_ts >= 1.0:
-                self.spark.append({"t": now, "flows": self.counters["flows"],
-                                   "attacks": self.counters["tp"] + self.counters["fn"] + self.counters["fp"],
-                                   "alerts": self.counters["alerts"],
-                                   "blocks": self.counters["blocks"]})
-                self._last_spark_ts = now
-            return dict(record)
+            self.packets.clear()
+            self.detections.clear()
+            self.samples.clear()
+        from .capture import FlowAnalyzer  # noqa: PLC0415
+        self.analyzer = FlowAnalyzer(window_sec=60.0)
+        self._last_sample_ts = time.time()
+        self._last_packets = 0
+        self._last_dets = 0
+        self._packets_buf.clear()
+        self._dets_buf.clear()
+        self.started_at = time.time()
+        self.last_error = ""
 
-    def _bump_ip(self, src: str, det, attack: bool, blocked: bool, stamp: float) -> None:
-        st = self.ip_state.setdefault(src, {"src": src, "flows": 0, "attacks": 0,
-                                            "alerts": 0, "blocked": False,
-                                            "verdicts": Counter(), "last": stamp})
-        st["flows"] += 1
-        st["last"] = stamp
-        if attack:
-            st["attacks"] += 1
-            st["verdicts"][det.verdict] += 1
-            st["alerts"] += 1
-        if blocked:
-            st["blocked"] = True
+    def _on_error(self, msg: str) -> None:
+        self.last_error = msg
+        self.mode = "error" if self.source and self.source.mode == "live" else self.mode
+        if self.source and not self.source.is_alive():
+            self.source = None
 
-    def run_forever(self) -> None:
-        """后台线程主循环。"""
-        while True:
-            if self.paused:
-                time.sleep(0.1)
+    # ------------------------------------------------------------- 数据回调
+    def _on_record(self, rec: PacketRecord) -> None:
+        try:
+            brief = self.analyzer.ingest(rec)
+            pkt = rec.to_dict()
+            pkt["f"] = brief
+            with self._lock:
+                self.seq += 1
+                pkt["seq"] = self.seq
+                self.packets.append(pkt)
+        except Exception:
+            pass
+
+    def _start_watcher(self) -> None:
+        self._watchdog_stop.clear()
+        if self._watcher and self._watcher.is_alive():
+            return
+        self._watcher = threading.Thread(target=self._watch_loop, daemon=True,
+                                         name="arkids-watch")
+        self._watcher.start()
+
+    def _watch_loop(self) -> None:
+        while not self._watchdog_stop.is_set():
+            time.sleep(1.0)
+            if self.source is None or not self.source.is_alive():
+                if self.source is not None:
+                    self._on_error(self.source.last_error or "采集已结束")
+                    self.source = None
+                    self.mode = "idle"
                 continue
-            self.tick()
-            time.sleep(max(0.001, 1.0 / max(self.speed, 1.0)))
+            now = time.time()
+            # 速率采样
+            pcount = self.analyzer.counter["packets"]
+            dt = max(now - self._last_sample_ts, 1e-3)
+            self._packets_buf.append((now, (pcount - self._last_packets) / dt))
+            self._last_packets = pcount
+            det_count = len(self.detections)
+            self._dets_buf.append((now, max(0, det_count - self._last_dets) / dt))
+            self._last_dets = det_count
+            self._last_sample_ts = now
+            self.samples.append({"t": now, "pps": self._packets_buf[-1][1],
+                                 "dps": self._dets_buf[-1][1]})
+            # 周期性启发式检测
+            for d in self.analyzer.detections(now):
+                d["ts"] = now
+                d["time"] = _fmt_ts(now)
+                with self._lock:
+                    self.detections.appendleft(d)
+                if self.auto_block:
+                    ip = d.get("src") or d.get("dst")
+                    if ip and not self.fw.is_src_blocked(ip):
+                        self.fw.add(FirewallRule(src_ip=ip, action="deny",
+                                                 protocol="any",
+                                                 note="自动联动: " + d["kind"],
+                                                 source="auto"))
+            if self.saved_path and self.source.mode == "live" and self.source.saved_path:
+                self.saved_path = self.source.saved_path
 
-    def start(self) -> None:
-        if self._thread is None or not self._thread.is_alive():
-            self._thread = threading.Thread(target=self.run_forever, daemon=True,
-                                            name="arkids-live")
-            self._thread.start()
-
-    # ------------------------------------------------------------- 快照构建
-    def snapshot(self, max_events: int = 120) -> dict:
-        with self._lock:
-            events = list(self.events)[-max_events:]
-            ip_state = {k: {**v, "verdicts": dict(v["verdicts"])}
-                        for k, v in self.ip_state.items()}
-            counters = dict(self.counters)
-            spark = list(self.spark)
-            seq = self.seq
-        flows_w = len(events)
-        attacks_w = sum(1 for e in events if e["attack"])
-        attack_rate = attacks_w / max(flows_w, 1)
-        thr = "safe"
-        if attack_rate > 0.5 or counters["blocks"] > 0:
-            thr = "critical"
-        elif attack_rate > 0.2:
-            thr = "warning"
-        tp, fp, tn, fn = (counters[k] for k in ("tp", "fp", "tn", "fn"))
-        hits = tp + fp + tn + fn
-        acc = (tp + tn) / max(hits, 1)
-        recall = tp / max(tp + fn, 1)
-        # 图节点与边(由近期事件聚合)
-        nodes, links = self._graph(events)
+    # ------------------------------------------------------------- 快照
+    def meta(self) -> dict:
+        src = self.source
         return {
-            "ts": time.time(), "seq": seq, "paused": self.paused,
-            "speed": self.speed, "threshold": self.detector.threshold,
-            "threat_level": thr, "server": SERVER_IP,
-            "stats": {
-                "flows": counters["flows"], "alerts": counters["alerts"],
-                "blocks": counters["blocks"], "tp": tp, "fp": fp, "tn": tn, "fn": fn,
-                "accuracy": round(acc, 4), "recall": round(recall, 4),
-                "flows_window": flows_w, "attacks_window": attacks_w,
-                "attack_rate": round(attack_rate, 4),
-                "active_srcs": len(ip_state),
-                "blocked_ips": [s for s, st in ip_state.items() if st["blocked"]],
-            },
-            "spark": spark[-90:],
-            "nodes": nodes, "links": links,
-            "events": events, "ips": ip_state,
+            "mode": self.mode,
+            "source": self.source_label,
+            "last_error": self.last_error,
+            "capturing": bool(src and src.is_alive()),
+            "started_at": self.started_at,
+            "packets_captured": self.analyzer.counter["packets"],
+            "saved_path": self.saved_path,
+            "auto_block": self.auto_block,
+            "cap_filter": self.cap_filter,
+            "display_filter": self.display_filter,
+            "tools": {"tshark": str(self.tshark) if self.tshark else None,
+                      "wireshark": str(self.wireshark) if self.wireshark else None,
+                      "tshark_version": tshark_version(self.tshark)},
+            "interfaces": self.ifaces,
+            "save_dir": str(DEFAULT_SAVE_DIR),
         }
 
-    def _graph(self, events: list) -> tuple[list, list]:
-        edges: dict[tuple[str, str], dict] = {}
-        for e in events:
-            key = (e["src"], e["dst"])
-            ed = edges.setdefault(key, {"src": e["src"], "dst": e["dst"],
-                                        "count": 0, "attacks": 0,
-                                        "last_verdict": "normal", "last_score": 0.0,
-                                        "blocked": False})
-            ed["count"] += 1
-            if e["attack"]:
-                ed["attacks"] += 1
-                ed["last_verdict"] = e["verdict"]
-                ed["last_score"] = e["score"]
-            if e["action"] == "block":
-                ed["blocked"] = True
+    def snapshot(self) -> dict:
+        c = self.analyzer.counter
+        now = time.time()
+        recent_crit = [d for d in self.detections
+                       if d["level"] == "critical" and now - d.get("ts", 0) < 60]
+        recent_det = [d for d in self.detections if now - d.get("ts", 0) < 120]
+        level = "critical" if recent_crit else ("warning" if recent_det else "safe")
+        with self._lock:
+            packets = list(self.packets)[-220:]
+            detections = list(self.detections)[:120]
+        nodes, links = self._graph()
+        flows = self.analyzer.flows
+        return {
+            "ts": now,
+            "meta": self.meta(),
+            "threat_level": level,
+            "stats": {
+                "packets": c["packets"], "bytes": c["bytes_"],
+                "flows_now": len(flows),
+                "flows_total": self.analyzer.total_flows_seen,
+                "tcp": c["tcp"], "udp": c["udp"], "icmp": c["icmp"],
+                "detections": len(detections),
+                "critical_now": len(recent_crit),
+                "pps": round(self._packets_buf[-1][1], 1) if self._packets_buf else 0.0,
+                "dps": round(self._dets_buf[-1][1], 2) if self._dets_buf else 0.0,
+            },
+            "nodes": nodes,
+            "links": links,
+            "packets": packets,
+            "detections": detections,
+            "spark": list(self.samples)[-150:],
+            "top_hosts": self._top_hosts(12),
+        }
+
+    def _graph(self) -> tuple[list, list]:
+        flows = self.analyzer.flows
         nodes: dict[str, dict] = {}
-        for (src, dst) in edges:
-            nodes.setdefault(src, {"id": src, "role": "attacker" if src.startswith("203.0.113.")
-                                   else "user"})
-            nodes.setdefault(dst, {"id": dst, "role": "server"})
-        links = [{"src": v["src"], "dst": v["dst"], "count": v["count"],
-                  "attacks": v["attacks"], "verdict": v["last_verdict"],
-                  "score": v["last_score"], "blocked": v["blocked"]}
-                 for v in edges.values()]
-        return list(nodes.values()), links
+        links: list[dict] = []
+        for f in flows.values():
+            n = nodes.setdefault(f["src"], {"id": f["src"], "role": "internal"
+                                            if _is_internal(f["src"]) else "external",
+                                            "pkts": 0, "bytes": 0, "flows": 0})
+            m = nodes.setdefault(f["dst"], {"id": f["dst"], "role": "internal"
+                                            if _is_internal(f["dst"]) else "external",
+                                            "pkts": 0, "bytes": 0, "flows": 0})
+            n["pkts"] += f["pkts"]; n["bytes"] += f["bytes"]; n["flows"] += 1
+            m["pkts"] += f["pkts"]; m["bytes"] += f["bytes"]; m["flows"] += 1
+            links.append({"src": f["src"], "dst": f["dst"], "pkts": f["pkts"],
+                          "bytes": f["bytes"], "proto": f["proto"],
+                          "dport": f["dport"]})
+        links.sort(key=lambda x: -x["pkts"])
+        top = sorted(nodes.values(), key=lambda x: -x["pkts"])[:80]
+        ids = {x["id"] for x in top}
+        kept = [l for l in links if l["src"] in ids and l["dst"] in ids][:220]
+        return top, kept
+
+    def _top_hosts(self, k: int) -> list[dict]:
+        hosts: dict[str, Counter] = {}
+        for f in self.analyzer.flows.values():
+            for ip, side in ((f["src"], "out"), (f["dst"], "in")):
+                h = hosts.setdefault(ip, Counter())
+                h["pkts"] += f["pkts"]
+                h["bytes"] += f["bytes"]
+                h[side] += f["pkts"]
+        out = []
+        for ip, h in hosts.items():
+            out.append({"id": ip, "pkts": h["pkts"], "bytes": h["bytes"],
+                        "in": h["in"], "out": h["out"],
+                        "internal": _is_internal(ip)})
+        out.sort(key=lambda x: -x["pkts"])
+        return out[:k]
+
+    # ------------------------------------------------------------- 建议
+    def advice(self) -> list[dict]:
+        meta = self.meta()
+        out: list[dict] = []
+        if not meta["tools"]["tshark"]:
+            out.append({"level": "warn", "title": "未检测到 Wireshark/tshark",
+                        "detail": "实时抓包需要 Wireshark(含 tshark 与 Npcap)。也可"
+                                  "选择“.pcap 文件回放”加载真实抓包。",
+                        "recommended_action": "安装 Wireshark 后刷新页面再启用实时抓包。",
+                        "confidence": 1.0, "source": "system"})
+        elif not self.source and not self.saved_path:
+            out.append({"level": "info", "title": "等待真实流量",
+                        "detail": "选择一个网卡开始抓包, 或加载真实 pcap 文件回放。",
+                        "recommended_action": "在左上角数据源中选择接口或文件。",
+                        "confidence": 1.0, "source": "system"})
+        pending = [d for d in list(self.detections)[:8]]
+        if pending:
+            unblocked = [d for d in pending
+                         if not self.fw.is_src_blocked(d.get("src") or d.get("dst") or "")]
+            if unblocked and not self.auto_block:
+                out.append({"level": "warn", "title": f"有 {len(unblocked)} 条威胁待处置",
+                            "detail": "最新: " + " / ".join(d["title"] for d in unblocked[:3]),
+                            "recommended_action": "在“威胁与处置”中对目标 IP 添加 deny 规则"
+                                                  "(或开启自动联动保护)。",
+                            "confidence": 0.9, "source": "detector"})
+        if self.saved_path:
+            out.append({"level": "info", "title": "可复核原始抓包",
+                        "detail": f"真实数据包已保存/加载: {self.saved_path}",
+                        "recommended_action": "用 Wireshark 打开该文件做人工复核。",
+                        "confidence": 1.0, "source": "wireshark"})
+        return out
 
     def advisor_context(self) -> dict:
-        snap = self.snapshot(max_events=200)
-        return {
-            "stats": snap["stats"], "events": snap["events"],
-            "blocklist": snap["stats"]["blocked_ips"],
-            "fw_rules": self.fw.rules(), "server": SERVER_IP,
-            "threshold": self.threshold_for_advisor(),
-        }
-
-    def threshold_for_advisor(self) -> float:
-        return float(self.detector.threshold)
-
-    def control(self, paused: bool | None = None, speed: float | None = None) -> dict:
-        if paused is not None:
-            self.paused = bool(paused)
-        if speed and speed > 0:
-            self.speed = float(speed)
-        return {"paused": self.paused, "speed": self.speed}
+        snap = self.snapshot()
+        return {"stats": snap["stats"], "events": snap["detections"][:30],
+                "top_hosts": snap["top_hosts"],
+                "fw_rules": self.fw.rules(),
+                "mode": self.mode, "source": self.source_label}
 
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "ArkIDS-Dashboard/0.1"
 
-    # ------------------------------------------------------------- 路由
     def do_GET(self):  # noqa: N802
-        svc = self.server.service  # type: ignore[attr-defined]
+        svc: DashboardService = self.server.service  # type: ignore[attr-defined]
         path = self.path.split("?")[0]
         if path == "/health":
-            self._json({"status": "ok", "service": "arkids-dashboard"})
+            self._json({"status": "ok", "service": "arkids-dashboard",
+                        "mode": svc.monitor.mode})
         elif path in ("/", "/index.html", "/app.js", "/style.css", "/favicon.ico"):
             self._static(path)
+        elif path == "/api/meta":
+            self._json(svc.monitor.meta())
         elif path == "/api/snapshot":
-            self._json(svc.live.snapshot())
-        elif path == "/api/events":
-            n = int(self._query().get("n", ["150"])[0])
-            with svc.live._lock:
-                evs = list(svc.live.events)[-n:]
-            self._json(evs)
+            self._json(svc.monitor.snapshot())
+        elif path == "/api/packets":
+            n = int(self._query().get("n", ["300"])[0])
+            self._json({"packets": list(svc.monitor.packets)[-n:]})
         elif path == "/api/firewall":
-            self._json(svc.live.fw.rules())
+            self._json(svc.monitor.fw.rules())
         elif path == "/api/firewall/script":
-            self._json({"script": svc.live.fw.script_text()})
+            self._json({"script": svc.monitor.fw.script_text()})
         elif path == "/api/advisor":
-            ctx = svc.live.advisor_context()
-            self._json({"rules": svc.live.advisor.rules(ctx),
-                        "llm_available": svc.live.advisor.llm_available})
+            rules = svc.monitor.advice()
+            self._json({"rules": rules,
+                        "llm_available": svc.monitor.advisor.llm_available})
         else:
             self._json({"error": "not found"}, code=404)
 
     def do_POST(self):  # noqa: N802
-        svc = self.server.service  # type: ignore[attr-defined]
+        svc: DashboardService = self.server.service  # type: ignore[attr-defined]
+        path = self.path.split("?")[0]
+        if path == "/api/upload-capture":   # 二进制上传, 不能走 JSON 解析
+            name = Path(self._query().get("name", ["capture.pcap"])[0]).name
+            if not name.lower().endswith((".pcap", ".pcapng", ".cap")):
+                self._json({"ok": False, "error": "仅支持 .pcap/.pcapng/.cap"}, code=400)
+                return
+            up_dir = DEFAULT_SAVE_DIR / "uploads"
+            up_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                data = self.rfile.read(length) if length else b""
+            except Exception:
+                self._json({"ok": False, "error": "读取上传内容失败"}, code=400)
+                return
+            if not data:
+                self._json({"ok": False, "error": "上传内容为空"}, code=400)
+                return
+            target = up_dir / name
+            target.write_bytes(data)
+            self._json({"ok": True, "path": str(target), "bytes": len(data)})
+            return
         body = self._read_json()
         if body is None:
             return
-        path = self.path.split("?")[0]
-        if path == "/api/control":
-            self._json(svc.live.control(
-                paused=body.get("paused"), speed=body.get("speed")))
+        m = svc.monitor
+        if path == "/api/capture":
+            action = body.get("action")
+            if action == "start-live":
+                if body.get("filter") is not None:
+                    m.cap_filter = str(body["filter"])
+                self._json(m.start_live(body.get("interface")))
+            elif action == "start-pcap":
+                m.display_filter = str(body.get("display_filter", ""))
+                self._json(m.start_pcap(str(body.get("file", "")),
+                                        m.display_filter))
+            elif action == "stop":
+                self._json(m.stop())
+            elif action == "auto-block":
+                m.auto_block = bool(body.get("enabled", False))
+                self._json({"ok": True, "auto_block": m.auto_block})
+            elif action == "refresh":
+                m.ifaces = list_interfaces(m.tshark)
+                self._json({"ok": True, "interfaces": m.ifaces})
+            else:
+                self._json({"error": "unknown action"}, code=400)
+        elif path == "/api/tools/open":
+            res = open_capture_file(
+                m.wireshark,
+                path=str(body.get("file") or "") if body.get("file") else "",
+                interface=str(body.get("interface") or ""))
+            self._json(res)
         elif path == "/api/firewall":
             rule = FirewallRule(
                 src_ip=str(body.get("src_ip", "")).strip(),
@@ -312,23 +441,23 @@ class _Handler(BaseHTTPRequestHandler):
             if not rule.src_ip:
                 self._json({"error": "src_ip required"}, code=400)
                 return
-            saved = svc.live.fw.add(rule)
-            self._json(saved.to_dict())
+            self._json(m.fw.add(rule).to_dict())
         elif path == "/api/firewall/toggle":
-            rule = svc.live.fw.update(str(body.get("id", "")),
-                                      enabled=bool(body.get("enabled", True)))
-            self._json(rule.to_dict() if rule else {"error": "rule not found"}, code=200 if rule else 404)
+            rule = m.fw.update(str(body.get("id", "")),
+                               enabled=bool(body.get("enabled", True)))
+            self._json(rule.to_dict() if rule else {"error": "not found"},
+                       code=200 if rule else 404)
         elif path == "/api/firewall/delete":
-            ok = svc.live.fw.delete(str(body.get("id", "")))
+            ok = m.fw.delete(str(body.get("id", "")))
             self._json({"ok": ok}, code=200 if ok else 404)
         elif path == "/api/advisor/llm":
-            ctx = svc.live.advisor_context()
-            res = svc.live.advisor.llm_advice(ctx, str(body.get("question", "")))
+            res = m.advisor.llm_advice(m.advisor_context(),
+                                       str(body.get("question", "")))
             self._json(res)
         else:
             self._json({"error": "not found"}, code=404)
 
-    # ------------------------------------------------------------- 工具
+    # ------------------------------------------------------------- 工具方法
     def _query(self) -> dict:
         from urllib.parse import parse_qs
         q = self.path.split("?", 1)
@@ -336,14 +465,13 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _static(self, path: str) -> None:
         name = "index.html" if path == "/" else path.lstrip("/")
-        file = (WEBUI_DIR / name)
+        file = WEBUI_DIR / name
         if not file.exists():
             self._json({"error": "not found"}, code=404)
             return
-        mime = MIME.get(file.suffix, "text/plain")
         payload = file.read_bytes()
         self.send_response(200)
-        self.send_header("Content-Type", mime)
+        self.send_header("Content-Type", MIME.get(file.suffix, "text/plain"))
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -367,32 +495,30 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def log_message(self, fmt, *args) -> None:
-        pass  # 控制台静默, 由 UI 呈现态势
+        pass
 
 
 class DashboardService:
-    def __init__(self, model_path: str, data_path: str | None = None,
-                 threshold: float = 0.5, attacker_pool: int = 5,
-                 block_hits: int = 3, window_sec: float = 60.0,
-                 state_dir: str = "run", seed: int = 7,
-                 speed: float = 40.0) -> None:
-        self.live = LiveEngine(model_path=model_path, data_path=data_path,
-                               threshold=threshold, attacker_pool=attacker_pool,
-                               block_hits=block_hits, window_sec=window_sec,
-                               state_dir=state_dir, seed=seed, speed=speed)
+    """启动参数仅为 UI 层引导; 真正数据由 LiveMonitor 从真实来源采集。"""
+
+    def __init__(self, state_dir: str = "run") -> None:
+        self.monitor = LiveMonitor(state_dir=state_dir)
 
     def serve(self, host: str = "127.0.0.1", port: int = 8642,
               open_browser: bool = False) -> None:
-        self.live.start()
         httpd = ThreadingHTTPServer((host, port), _Handler)
         httpd.service = self  # type: ignore[attr-defined]
         url = f"http://{host}:{port}"
-        print(f"ArkIDS 可视化控制台: {url}  (Ctrl+C 退出)")
+        print(f"ArkIDS 真实流量监控控制台: {url}  (Ctrl+C 退出)")
+        t = self.monitor.tshark
+        print("抓包引擎:", (str(t) + " " + tshark_version(t)) if t
+              else "未检测到 tshark —— 实时抓包需安装 Wireshark/Npcap, 或回放真实 pcap")
         if open_browser:
-            import threading as _t
             import webbrowser as _wb
-            _t.Timer(1.2, lambda: _wb.open(url)).start()
+            threading.Timer(1.2, lambda: _wb.open(url)).start()
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
             print("\n服务已停止")
+        finally:
+            self.monitor.stop()

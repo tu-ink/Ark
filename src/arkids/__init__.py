@@ -12,12 +12,13 @@
     features   特征工程(类别编码 + 数值标准化)
     models     模型训练/评估与持久化
     detector   流式检测引擎(阈值/置信度决策)
-    defense    防御执行引擎(封禁、规则、告警)
+    defense    智能防御引擎(证据累积/封禁/规则)
+    capture    真实流量采集: tshark/pcap 解析 + 启发式检测(不构造数据)
     firewall   防火墙规则库(在线编辑/脚本导出)
     advisor    AI 智能建议(规则引擎 + 可选 LLM)
-    dashboard  可视化控制台服务(实时攻防仿真 + API)
-    webui      控制台前端(HTML/CSS/JS)
-    simulate   实时流量回放与攻击仿真演示
+    dashboard  可视化监控服务(真实流量监控 + API)
+    webui      监控前端(HTML/CSS/JS)
+    simulate   离线攻击仿真(带标注实验/评测专用, 与真实监控分离)
     server     极简 REST 检测服务(stdlib)
     cli        命令行入口(python -m arkids / arkids)
 """

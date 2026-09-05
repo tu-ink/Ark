@@ -94,24 +94,26 @@
   `POST /detect`（41 特征 JSON）、`POST /defense/block`（强制封禁）
 - **可视化控制台**(stdlib + 原生前端)：`python -m arkids dashboard`，见 7.1
 
-### 7.1 可视化控制台(Web Dashboard)
+### 7.1 真实流量监控控制台(内嵌 Wireshark 引擎)
 
-控制台在检测/防御内核之上提供一层“实时态势可视化 + 交互管理”，由三个新模块支撑：
+监控控制台面向**真实网络流量**，遵循“不构造数据”原则：
 
-- `firewall.FirewallStore`：防火墙规则库(增删/启停/幂等去重)，与自动封禁联动写入，
-  统一导出 nftables/iptables 脚本；REST: `GET/POST /api/firewall`、`POST /api/firewall/toggle|delete`、
-  `GET /api/firewall/script`；
-- `advisor.AIAdvisor`：智能建议两级结构 —— ① `HeuristicAdvisor` 本地可解释规则引擎
-  (威胁等级评估/扫描探测/洪泛/误报-漏报平衡/规则同步检查, 输入当前态势快照, 离线可用)；
-  ② `LLMAdvisor` 可选在线增强(DeepSeek Chat API, 密钥仅从环境变量/系统凭据库读取, 不入库;
-  失败自动回退)。REST: `GET /api/advisor`、`POST /api/advisor/llm`；
-- `dashboard.LiveEngine` + `webui/`：后台线程持续回放流量(检测→证据累积→自动封禁→
-  防火墙同步), 聚合为“图节点/边 + 事件流 + KPI/趋势 + 威胁等级”快照;
-  `webui/` 为纯 HTML/CSS/JS 单页(Canvas 网络动画、攻击日志表、防火墙编辑器、AI 建议面板)。
+- `capture.py`(采集与解析)：优先调用 Wireshark/tshark 命令行引擎，实时抓包采用
+  `tshark -i <网卡> -q -F pcap -w -` 原始字节管道 → 内建 `RawPcapReader` 增量解码
+  (Ethernet/IPv4/IPv6/TCP/UDP/ICMP)，并**同步把真实包原样落盘 .pcap**；
+  离线回放同样由 tshark 统一读取(.pcap/.pcapng)；无 tshark 时内置解析器直接读经典
+  .pcap。支持捕获过滤器 `-f` / 显示过滤器 `-Y`(Wireshark 语法)。
+- `FlowAnalyzer`(实时分析)：60s 滑动窗口连接/主机统计(按五元组聚合、SYN 独立按目标
+  计数)，输出可解释启发式检测 —— TCP SYN 洪泛、端口扫描、高连接速率(含证据与置信度)。
+- 与外部工具联动：`open_capture_file()` 用 Wireshark GUI 打开当前接口或已保存/加载的
+  真实抓包文件复核(可自动识别安装路径/`WIRESHARK_GUI`)。
+- `dashboard.LiveMonitor + webui/`：抓包线程 → 逐包入分析器 → 快照聚合为
+  “网络拓扑(私网↔公网) + 封包表 + 威胁与处置 + KPI/趋势”，前端 1s 轮询渲染；
+  处置动作(deny 规则)默认**人工确认**，`auto_block` 默认关闭以规避误伤真实业务。
+- `advisor` 的 AI 研判输入为真实统计与告警摘要(见 §6 前文双级结构)。
 
-控制台每 1s 轮询 `/api/snapshot` 渲染, 支持暂停/调速(`POST /api/control`);
-默认使用独立状态目录 `run/dashboard` 并干净启动(`--no-reset` 保留跨启动状态),
-避免与 `simulate` 的历史封禁状态相互干扰。
+> 离线算法研究链路(train/simulate + NSL-KDD/合成演示)与真实监控链路分离：
+> `simulate` 仅用于带标注数据的算法实验与论文复现，监控界面不播放其仿真输出。
 
 ## 8. 局限与后续工作
 

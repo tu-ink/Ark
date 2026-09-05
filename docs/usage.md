@@ -108,35 +108,45 @@ curl -s -X POST localhost:8735/defense/block -H "Content-Type: application/json"
 curl -s localhost:8735/defense/status
 ```
 
-### 2.7 可视化控制台（实时攻防网络 / 防火墙 / 日志 / AI 建议）
+### 2.7 真实流量监控控制台（内嵌 Wireshark/tshark 引擎）
+
+> 本控制台**不构造数据**：只消费本机网卡实时抓包或用户提供的真实抓包文件；
+> 无数据源时界面显示“等待真实流量”。
 
 ```bash
-# 需先有训练好的模型(见 2.3); 默认干净启动、独立状态目录 run/dashboard
-python -m arkids dashboard --model models/arkids_rf.joblib --port 8642
+python -m arkids dashboard --port 8642                    # 打开 http://127.0.0.1:8642
+python -m arkids dashboard --interface "以太网"             # 直接对指定网卡抓包
+python -m arkids dashboard --pcap capture.pcap             # 回放真实抓包(.pcap/.pcapng)
+python -m arkids dashboard --pcap a.pcapng --display-filter "tcp.port==443"
 ```
 
-浏览器打开 http://127.0.0.1:8642：
+界面模块：
 
 | 模块 | 说明 |
 | --- | --- |
-| 🌐 实时攻防网络 | Canvas 动画: 攻击源→业务服务器(红)、内网用户→服务器(绿)、自动封禁源闪烁; 顶栏威胁等级/KPI, 下方每秒流量与封禁趋势 |
-| 📋 攻击日志 | 事件流水(时间/源/目标/判决/置信度/动作), 下拉可按 DoS/Probe/R2L/U2R/攻击/封禁过滤 |
-| 🧱 防火墙编辑 | 在线新增/启停/删除 deny·allow 规则, “查看脚本”预览 nftables 规则, 文件同步至 run/dashboard/ |
-| 🤖 AI 建议 | 左侧持续刷新规则引擎建议(离线); “生成 AI 深度建议”调用大模型(需配置 Key, 见下) |
+| 数据源 | “实时抓包”选择本机网卡(tshark `-D`)或“回放文件”上传/选择真实 pcap；支持 tshark 捕获过滤器 `-f` 与显示过滤器 `-Y` |
+| 🌐 实时网络拓扑 | 真实主机(私网/公网)连线图：线宽=真实流量、红=命中威胁；包速率/告警速率趋势 |
+| 📦 封包浏览 | 实时数据包表(时间/源/目标/协议/端口/TCP标志/长度)，本地搜索 + CSV 导出 |
+| ⚠ 威胁与处置 | 60s 流统计启发式检测：TCP SYN 洪泛、端口扫描、高连接速率(可解释证据)；一键“阻断源 IP”→ deny 规则 |
+| 🧱 防火墙规则 | deny/allow 规则在线编辑 + nftables/iptables 脚本导出(处置台) |
+| 🤖 AI 研判 | 本地规则引擎建议 + (可选)大模型综合研判；密钥见下 |
 
-常用参数：`--attacker-pool 5` 攻击源数量、`--block-hits 3` 封禁所需窗口内告警数、
-`--speed 40` 每秒回放事件数、`--threshold 0.5` 检测阈值、`--no-reset` 保留跨启动的
-封禁与规则。顶部“暂停 / 速率”按钮可直接在线调节。
+关键参数：`--auto-block` 开启“检测即自动加 deny 规则”（**默认关闭**，避免误伤真实业务）；
+实时抓包保存目录 `run/captures/`(自动落盘真实 pcap)；`--state-dir` 存放防火墙规则等状态。
 
-**在线 LLM 建议（可选）**：设置环境变量 `DEEPSEEK_API_KEY=sk-...` 后重启控制台即可；
-Windows 下若系统凭据库已存 `reasonix:DEEPSEEK_API_KEY` 会自动读取（代码不保存密钥、
-密钥不入库）。受限网络/自签代理环境下可设 `ARKIDS_LLM_INSECURE=1` 关闭 TLS 校验。
-未配置或调用失败时自动回退到离线规则引擎，不影响其他功能。
+**Wireshark 联动**：检测到 tshark/Wireshark 后，工具栏显示引擎版本并可一键
+“用 Wireshark 打开”当前抓包接口或已保存/加载的真实文件复核。
+无 tshark 时：可安装 [Wireshark](https://www.wireshark.org/download.html)(含 Npcap、
+以管理员运行) 启用实时抓包；或使用“回放文件”模式(内置经典 .pcap 解析器，无需 tshark)。
+
+**在线 LLM 研判（可选）**：设置 `DEEPSEEK_API_KEY`(Windows 系统凭据库
+`reasonix:DEEPSEEK_API_KEY` 也会自动读取，密钥不入库)；`ARKIDS_LLM_INSECURE=1` 可关闭
+TLS 校验。未配置/失败时自动回退规则引擎。
 
 ### 2.8 运行测试
 
 ```bash
-python -m unittest discover -s tests -v    # 20 项用例
+python -m unittest discover -s tests -v    # 26 项用例
 ```
 
 ## 3. 常见问题

@@ -133,29 +133,32 @@ def _cmd_serve(args: argparse.Namespace) -> None:
 
 
 def _cmd_dashboard(args: argparse.Namespace) -> None:
-    """启动可视化控制台(实时攻防网络/防火墙/日志/AI 建议)。"""
+    """启动真实流量监控控制台(实时抓包/回放/封包浏览/威胁处置/AI 研判)。"""
     ensure_dirs()
-    if not Path(args.model).exists():
-        print(f"[error] 未找到模型 {args.model}, 请先运行: python -m arkids train")
-        raise SystemExit(2)
-    # 控制台使用独立状态目录并默认“干净启动”, 避免与 simulate 的历史封禁状态混叠
     import shutil
     state_dir = Path(args.state_dir)
     if not getattr(args, "no_reset", False):
         shutil.rmtree(state_dir, ignore_errors=True)
         state_dir.mkdir(parents=True, exist_ok=True)
-    # 打包版(exe)双击默认打开浏览器; 也可用 ARKIDS_OPEN_BROWSER=1 / --no-browser 控制
     open_browser = bool(getattr(sys, "frozen", False)) or \
         os.environ.get("ARKIDS_OPEN_BROWSER") == "1"
     if getattr(args, "no_browser", False):
         open_browser = False
     from .dashboard import DashboardService
-    DashboardService(
-        model_path=args.model, data_path=args.data, threshold=args.threshold,
-        attacker_pool=args.attacker_pool, block_hits=args.block_hits,
-        window_sec=args.window, state_dir=str(state_dir),
-        seed=args.seed, speed=args.speed,
-    ).serve(args.host, args.port, open_browser=open_browser)
+    svc = DashboardService(state_dir=str(state_dir))
+    if args.auto_block:
+        svc.monitor.auto_block = True
+    if args.cap_filter:
+        svc.monitor.cap_filter = args.cap_filter
+    if args.pcap:
+        res = svc.monitor.start_pcap(args.pcap, args.display_filter)
+        if not res.get("ok"):
+            print(f"[warn] 回放未启动: {res.get('error')}")
+    elif args.interface:
+        res = svc.monitor.start_live(args.interface)
+        if not res.get("ok"):
+            print(f"[warn] 抓包未启动: {res.get('error')}")
+    svc.serve(args.host, args.port, open_browser=open_browser)
 
 
 def _cmd_demo(args: argparse.Namespace) -> None:
@@ -221,23 +224,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--state-dir", default="run")
     sp.set_defaults(func=_cmd_serve)
 
-    sp = sub.add_parser("dashboard", help="启动可视化控制台(实时攻防网络/防火墙/日志/AI 建议)")
-    sp.add_argument("--model", default=str(DEFAULT_MODEL))
-    sp.add_argument("--data", default=None, help="回放流量文件(缺省使用演示集)")
-    sp.add_argument("--threshold", type=float, default=0.5)
-    sp.add_argument("--attacker-pool", type=int, default=5)
-    sp.add_argument("--block-hits", type=int, default=3)
-    sp.add_argument("--window", type=float, default=60.0)
-    sp.add_argument("--speed", type=float, default=40.0, help="每秒回放事件数")
+    sp = sub.add_parser("dashboard", help="启动真实流量监控控制台(Wireshark/tshark 抓包, 真实 pcap 回放)")
+    sp.add_argument("--interface", default=None, help="实时抓包网卡(不指定则由 UI 选择)")
+    sp.add_argument("--pcap", default=None, help="回放真实抓包文件(.pcap/.pcapng)")
+    sp.add_argument("--display-filter", default="", help="显示过滤器(tshark -Y, 回放时生效)")
+    sp.add_argument("--cap-filter", default="", help="捕获过滤器(tshark -f, 实时抓包)")
+    sp.add_argument("--auto-block", action="store_true",
+                    help="检测到威胁自动添加 deny 规则(危险, 默认关闭)")
     sp.add_argument("--host", default="127.0.0.1")
     sp.add_argument("--port", type=int, default=8642)
-    sp.add_argument("--state-dir", default="run/dashboard",
-                    help="运行状态目录(默认每次启动自动清空)")
-    sp.add_argument("--no-reset", action="store_true",
-                    help="不清空状态目录(跨启动保留封禁/规则)")
-    sp.add_argument("--no-browser", action="store_true",
-                    help="不自动打开浏览器(打包版双击默认自动打开)")
-    sp.add_argument("--seed", type=int, default=7)
+    sp.add_argument("--state-dir", default="run/dashboard")
+    sp.add_argument("--no-reset", action="store_true")
+    sp.add_argument("--no-browser", action="store_true")
     sp.set_defaults(func=_cmd_dashboard)
 
     sp = sub.add_parser("demo", help="一键演示(造数据+训练+仿真)")

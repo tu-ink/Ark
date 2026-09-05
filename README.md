@@ -15,7 +15,7 @@ ArkIDS（`arkids`）以标准评测集 **NSL-KDD** 的数据模式（41 维流�
 - **工程化**：版本单一来源、标准 pyproject 元数据、console 入口 `arkids`、
   wheel / PyInstaller exe 打包、应用图标与 favicon（详见 docs/packaging.md）。
 
-**当前版本：v0.2.0** · License: MIT · [CHANGELOG](CHANGELOG.md)
+**当前版本：v0.3.0** · License: MIT · [CHANGELOG](CHANGELOG.md)
 
 ## 快速开始
 
@@ -23,14 +23,14 @@ ArkIDS（`arkids`）以标准评测集 **NSL-KDD** 的数据模式（41 维流�
 
 发布产物在 `dist/`（或 GitHub Releases）：
 - `ArkIDS.exe`（单文件）：**双击即启动可视化控制台并自动打开浏览器**；
-- `ArkIDS-0.2.0-win64.zip`：目录版 + 说明/授权/图标。
+- `ArkIDS-0.3.0-win64.zip`：目录版 + 说明/授权/图标。
 
 ### B. 源码 / 开发者模式（Python ≥ 3.9）
 
 ```bash
 # 1) 安装依赖或直接安装 wheel
 pip install -r requirements.txt
-# 或: pip install dist/arkids-0.2.0-py3-none-any.whl   (安装后可直接用 arkids 命令)
+# 或: pip install dist/arkids-0.3.0-py3-none-any.whl   (安装后可直接用 arkids 命令)
 
 # 2) 一键演示: 生成演示数据 + 训练 + 仿真闭环
 python -m arkids demo            # 需要 PYTHONPATH=src (或安装为包后直接运行)
@@ -57,17 +57,18 @@ Ark/
 │   ├── models.py          #   模型训练/评估/持久化(RF/GB/MLP)
 │   ├── detector.py        #   流式检测引擎(置信度决策)
 │   ├── defense.py         #   智能防御引擎(证据累积/封禁/规则)
+│   ├── capture.py         #   真实流量采集: tshark/pcap 解析 + 启发式检测
 │   ├── firewall.py        #   防火墙规则库(在线编辑/脚本导出)
 │   ├── advisor.py         #   AI 智能建议(规则引擎 + 可选 LLM)
-│   ├── dashboard.py       #   可视化控制台服务(实时攻防仿真 + API)
+│   ├── dashboard.py       #   可视化控制台服务(真实流量监控 + API)
 │   ├── webui/             #   前端静态资源(HTML/CSS/JS, 原生无框架)
-│   ├── simulate.py        #   攻击仿真与检测-防御回放
+│   ├── simulate.py        #   离线攻击仿真(仅算法实验/评测用)
 │   ├── server.py          #   极简 REST 服务(stdlib)
 │   ├── cli.py             #   命令行入口
 │   └── version.py         #   版本号单一来源
 ├── assets/                # 应用图标(.ico/.png/favicon)与 exe 版本资源
 ├── scripts/               # 图标生成/打包/发布脚本(make_icon|make_wheel|entry|build_release)
-├── tests/                 # 单元测试(unittest, 20 项全部通过)
+├── tests/                 # 单元测试(unittest, 26 项全部通过)
 ├── docs/                  # 文献调研/设计/使用/实验/打包文档
 ├── data/                  # 数据(自动生成或下载, 已 gitignore)
 ├── models/                # 训练产物(已 gitignore)
@@ -80,27 +81,35 @@ Ark/
 └── LICENSE                # MIT
 ```
 
-## 可视化控制台（Web）
+## 真实流量监控控制台（Web，内嵌 Wireshark/tshark 引擎）
+
+> 数据真实性原则：**本控制台不生成、不播放任何仿真/构造流量**。它只消费两种真实来源：
+> ① 本机网卡实时抓包；② 用户提供的真实抓包文件(.pcap/.pcapng)。未选择数据源时显示
+> “等待真实流量”，而不是演示假数据。
 
 ```bash
-python -m arkids dashboard --model models/arkids_rf.joblib --port 8642
-# 浏览器打开 http://127.0.0.1:8642
+python -m arkids dashboard --port 8642                  # 打开 http://127.0.0.1:8642
+python -m arkids dashboard --pcap capture.pcap          # 直接回放真实抓包文件
+python -m arkids dashboard --interface "以太网"          # 直接对指定网卡抓包
 ```
 
-控制台以深色安防风格单页呈现，包含：
+- **抓包链路 = 内嵌 Wireshark 工具**：实时抓包由 tshark 以“原始字节管道”驱动
+  （`tshark -i <网卡> -F pcap -w -`），系统内建解析器逐包解码并**同步落盘真实 .pcap**；
+  界面可一键“用 Wireshark 打开”当前抓包/文件做人工复核（检测到 GUI 时自动启用）。
+  支持捕获过滤器(tshark `-f`)与显示过滤器(tshark `-Y`)。
+- **🌐 实时网络拓扑**：从真实数据包聚合的“内网主机(私网) ↔ 外网主机(公网)”连线图，
+  线宽按真实包量、红色连线表示命中威胁的主机，附包速率/告警速率趋势；
+- **封包浏览**：实时数据包表(时间/源/目标/协议/端口/TCP标志/长度)，支持本地搜索与 CSV 导出；
+- **威胁与处置**：基于 60s 流统计的启发式检测(SYN 洪泛/端口扫描/高连接速率)给出可解释证据，
+  支持“阻断源 IP”一键加入 deny 规则(默认**不**自动封禁，误伤可控)；
+- **🤖 AI 研判**：离线规则引擎给出处置建议；配置 `DEEPSEEK_API_KEY` 后可调用大模型对
+  真实态势做综合研判（密钥不入库、失败自动回退）。
 
-- **🌐 实时攻防网络**：Canvas 动画绘制“攻击源(203.0.113.x) → 业务服务器”与
-  “内网用户 → 服务器”的实时流量关系，攻击边红色脉冲、自动封禁源红色叉号闪烁，
-  下方为每秒流量/封禁趋势小图，顶栏实时威胁等级与 KPI；
-- **📋 攻击日志**：检测事件流水(时间/源/目标/判决/置信度/动作)，支持按攻击类型过滤；
-- **🧱 防火墙规则编辑器**：在线新增/启停/删除 deny·allow 规则，实时导出
-  nftables/iptables 脚本预览；
-- **🤖 AI 智能建议**：内置离线规则引擎持续给出可解释处置建议（依据/置信度/建议动作）；
-  若本机配置 `DEEPSEEK_API_KEY`（或 Windows 凭据库中 `reasonix:DEEPSEEK_API_KEY`），
-  可一键调用在线大模型生成综合研判（失败自动回退规则引擎，密钥绝不入库）。
-
-控制台默认使用独立的 `run/dashboard` 状态目录并“干净启动”（`--no-reset` 可保留跨启动
-封禁/规则）；顶部按钮可暂停回放或调节事件速率（20~160/s）。
+> 实时抓包需要本机安装 [Wireshark](https://www.wireshark.org/download.html)
+> （含 tshark 与 Npcap）并以管理员运行；无 tshark 时仍可用“回放抓包文件”模式：
+> 系统内置经典 .pcap 解析器直接读取真实文件。
+> 离线算法实验(NSL-KDD/合成演示 + 训练/评估)属于另一条研究链路，请使用
+> `arkids train|simulate` 命令，与本监控模式分离。
 
 ## 核心结果（合成演示数据集，4000 条，70/30 划分）
 
