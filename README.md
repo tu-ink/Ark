@@ -27,6 +27,7 @@ python -m arkids init-demo-data                          # 生成演示数据
 python -m arkids train --data data/demo_flows.csv        # 训练 RF 模型
 python -m arkids simulate --model models/arkids_rf.joblib # 检测+防御仿真
 python -m arkids serve --port 8735                       # REST 检测服务
+python -m arkids dashboard --port 8642                   # 可视化控制台(Web)
 ```
 
 > 提示：从仓库根目录运行时先设置 `PYTHONPATH=src`（Windows PowerShell：
@@ -44,15 +45,41 @@ Ark/
 │   ├── models.py          #   模型训练/评估/持久化(RF/GB/MLP)
 │   ├── detector.py        #   流式检测引擎(置信度决策)
 │   ├── defense.py         #   智能防御引擎(证据累积/封禁/规则)
+│   ├── firewall.py        #   防火墙规则库(在线编辑/脚本导出)
+│   ├── advisor.py         #   AI 智能建议(规则引擎 + 可选 LLM)
+│   ├── dashboard.py       #   可视化控制台服务(实时攻防仿真 + API)
+│   ├── webui/             #   前端静态资源(HTML/CSS/JS, 原生无框架)
 │   ├── simulate.py        #   攻击仿真与检测-防御回放
 │   ├── server.py          #   极简 REST 服务(stdlib)
 │   └── cli.py             #   命令行入口
-├── tests/                 # 单元测试(unittest, 13 项全部通过)
+├── tests/                 # 单元测试(unittest, 20 项全部通过)
 ├── docs/                  # 文献调研/设计/使用/实验文档
 ├── data/                  # 数据(自动生成或下载, 已 gitignore)
 ├── models/                # 训练产物(已 gitignore)
 └── run/                   # 运行产物: 告警/封禁/规则(已 gitignore)
 ```
+
+## 可视化控制台（Web）
+
+```bash
+python -m arkids dashboard --model models/arkids_rf.joblib --port 8642
+# 浏览器打开 http://127.0.0.1:8642
+```
+
+控制台以深色安防风格单页呈现，包含：
+
+- **🌐 实时攻防网络**：Canvas 动画绘制“攻击源(203.0.113.x) → 业务服务器”与
+  “内网用户 → 服务器”的实时流量关系，攻击边红色脉冲、自动封禁源红色叉号闪烁，
+  下方为每秒流量/封禁趋势小图，顶栏实时威胁等级与 KPI；
+- **📋 攻击日志**：检测事件流水(时间/源/目标/判决/置信度/动作)，支持按攻击类型过滤；
+- **🧱 防火墙规则编辑器**：在线新增/启停/删除 deny·allow 规则，实时导出
+  nftables/iptables 脚本预览；
+- **🤖 AI 智能建议**：内置离线规则引擎持续给出可解释处置建议（依据/置信度/建议动作）；
+  若本机配置 `DEEPSEEK_API_KEY`（或 Windows 凭据库中 `reasonix:DEEPSEEK_API_KEY`），
+  可一键调用在线大模型生成综合研判（失败自动回退规则引擎，密钥绝不入库）。
+
+控制台默认使用独立的 `run/dashboard` 状态目录并“干净启动”（`--no-reset` 可保留跨启动
+封禁/规则）；顶部按钮可暂停回放或调节事件速率（20~160/s）。
 
 ## 核心结果（合成演示数据集，4000 条，70/30 划分）
 
@@ -99,7 +126,10 @@ curl -s -X POST localhost:8735/defense/block -H "Content-Type: application/json"
    输出**类别 + 攻击概率**，支持按业务调节置信度阈值权衡误报/漏报；
 2. **智能防御**：单条告警不立即封禁，而是统计同源 IP 在时间窗口内的告警证据，
    达到阈值后联动封禁并导出防火墙规则（nftables/iptables），降低误杀；
-3. **可落地接口**：REST 检测服务、封禁清单 JSON、规则脚本输出，便于对接 SIEM/防火墙。
+3. **AI 智能建议**：内置可解释规则引擎持续输出处置建议（离线可用），可选接入
+   大模型生成综合研判，辅助运维决策；
+4. **可落地接口**：REST 检测服务、Web 可视化控制台（实时攻防网络/防火墙在线编辑/
+   攻击日志/AI 建议面板）、封禁清单 JSON、规则脚本输出，便于对接 SIEM/防火墙。
 
 ## 项目背景与致谢
 

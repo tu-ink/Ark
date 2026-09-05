@@ -16,7 +16,7 @@ export PYTHONPATH="$PWD/src"
 ## 2. 命令总览
 
 ```text
-python -m arkids {init-demo-data|fetch-nslkdd|train|simulate|serve|demo} [选项]
+python -m arkids {init-demo-data|fetch-nslkdd|train|simulate|serve|dashboard|demo} [选项]
 ```
 
 ### 2.1 一键演示 demo
@@ -108,10 +108,35 @@ curl -s -X POST localhost:8735/defense/block -H "Content-Type: application/json"
 curl -s localhost:8735/defense/status
 ```
 
-### 2.7 运行测试
+### 2.7 可视化控制台（实时攻防网络 / 防火墙 / 日志 / AI 建议）
 
 ```bash
-python -m unittest discover -s tests -v    # 13 项用例
+# 需先有训练好的模型(见 2.3); 默认干净启动、独立状态目录 run/dashboard
+python -m arkids dashboard --model models/arkids_rf.joblib --port 8642
+```
+
+浏览器打开 http://127.0.0.1:8642：
+
+| 模块 | 说明 |
+| --- | --- |
+| 🌐 实时攻防网络 | Canvas 动画: 攻击源→业务服务器(红)、内网用户→服务器(绿)、自动封禁源闪烁; 顶栏威胁等级/KPI, 下方每秒流量与封禁趋势 |
+| 📋 攻击日志 | 事件流水(时间/源/目标/判决/置信度/动作), 下拉可按 DoS/Probe/R2L/U2R/攻击/封禁过滤 |
+| 🧱 防火墙编辑 | 在线新增/启停/删除 deny·allow 规则, “查看脚本”预览 nftables 规则, 文件同步至 run/dashboard/ |
+| 🤖 AI 建议 | 左侧持续刷新规则引擎建议(离线); “生成 AI 深度建议”调用大模型(需配置 Key, 见下) |
+
+常用参数：`--attacker-pool 5` 攻击源数量、`--block-hits 3` 封禁所需窗口内告警数、
+`--speed 40` 每秒回放事件数、`--threshold 0.5` 检测阈值、`--no-reset` 保留跨启动的
+封禁与规则。顶部“暂停 / 速率”按钮可直接在线调节。
+
+**在线 LLM 建议（可选）**：设置环境变量 `DEEPSEEK_API_KEY=sk-...` 后重启控制台即可；
+Windows 下若系统凭据库已存 `reasonix:DEEPSEEK_API_KEY` 会自动读取（代码不保存密钥、
+密钥不入库）。受限网络/自签代理环境下可设 `ARKIDS_LLM_INSECURE=1` 关闭 TLS 校验。
+未配置或调用失败时自动回退到离线规则引擎，不影响其他功能。
+
+### 2.8 运行测试
+
+```bash
+python -m unittest discover -s tests -v    # 20 项用例
 ```
 
 ## 3. 常见问题

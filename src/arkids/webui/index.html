@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ArkIDS · AI 网络攻防可视化控制台</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">🛡</span>
+    <div>
+      <h1>ArkIDS 智能攻防态势控制台</h1>
+      <p class="sub">基于人工智能的网络攻击智能检测与防御 · 实时可视化</p>
+    </div>
+  </div>
+  <div class="threat" id="threatBox">
+    <span id="threatLabel">—</span>
+  </div>
+  <div class="ctrl">
+    <button id="btnPause" class="btn">⏸ 暂停</button>
+    <button id="btnSpeed" class="btn" title="点击切换回放速率">速率 40/s</button>
+  </div>
+  <div class="kpis" id="kpis">
+    <div class="kpi"><label>流量</label><b id="kFlows">0</b></div>
+    <div class="kpi"><label>告警</label><b id="kAlerts" class="warn">0</b></div>
+    <div class="kpi"><label>封禁</label><b id="kBlocks" class="danger">0</b></div>
+    <div class="kpi"><label>攻击率</label><b id="kRate">0%</b></div>
+    <div class="kpi"><label>检出率</label><b id="kRecall">—</b></div>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- 左: 实时攻防网络图 -->
+  <section class="panel net">
+    <h2>🌐 实时攻防网络 <span class="hint" id="netLegend"></span></h2>
+    <div class="canvas-wrap">
+      <canvas id="net" width="900" height="460"></canvas>
+      <div class="toast-layer" id="toasts"></div>
+    </div>
+    <div class="sparkbox"><canvas id="spark" width="900" height="64"></canvas></div>
+  </section>
+
+  <!-- 中: 攻击日志 -->
+  <section class="panel log">
+    <h2>📋 攻击日志
+      <span class="tools">
+        <select id="logFilter"><option value="">全部</option>
+          <option value="attack">仅攻击</option>
+          <option value="block">仅封禁</option>
+          <option value="dos">DoS</option>
+          <option value="probe">Probe</option>
+          <option value="r2l">R2L</option>
+          <option value="u2r">U2R</option>
+        </select>
+        <button id="btnClearLog" class="btn mini">清空视图</button>
+      </span>
+    </h2>
+    <div class="table-scroll">
+      <table id="logTable">
+        <thead><tr><th>#</th><th>时间</th><th>源IP</th><th>目标</th><th>判决</th><th>置信度</th><th>动作</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 右: AI 建议 + 防火墙 -->
+  <aside class="right">
+    <section class="panel ai">
+      <h2>🤖 AI 智能建议 <span class="badge" id="llmBadge">规则引擎</span></h2>
+      <div id="adviceList" class="advice-list"></div>
+      <div class="ai-ask">
+        <textarea id="aiQuestion" rows="2" placeholder="追问 AI(可选, 如: 下一步如何处理?)"></textarea>
+        <button id="btnAskAi" class="btn primary">🔮 生成 AI 深度建议</button>
+      </div>
+      <div id="aiAnswer" class="ai-answer hidden"></div>
+    </section>
+
+    <section class="panel fw">
+      <h2>🧱 防火墙规则编辑器
+        <button id="btnScript" class="btn mini">查看脚本</button>
+      </h2>
+      <form id="fwForm" class="fw-form" autocomplete="off">
+        <input id="fwSrc" placeholder="源IP, 如 203.0.113.66" required>
+        <select id="fwAction"><option value="deny">deny 阻断</option><option value="allow">allow 放行</option></select>
+        <select id="fwProto"><option value="any">any</option><option value="tcp">tcp</option>
+          <option value="udp">udp</option><option value="icmp">icmp</option></select>
+        <input id="fwPort" placeholder="端口(可选)" size="6">
+        <input id="fwNote" placeholder="备注(可选)">
+        <button type="submit" class="btn primary">添加规则</button>
+      </form>
+      <div class="table-scroll short">
+        <table id="fwTable">
+          <thead><tr><th>动作</th><th>源IP</th><th>协议/端口</th><th>来源</th><th>状态</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <pre id="fwScript" class="hidden"></pre>
+    </section>
+  </aside>
+</main>
+
+<footer class="foot">ArkIDS · AI 检测模型(五分类) + 证据累积自动防御 · 数据为离线演示/仿真回放</footer>
+<script src="app.js"></script>
+</body>
+</html>

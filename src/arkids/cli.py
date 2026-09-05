@@ -14,6 +14,7 @@ import argparse
 import json
 import sys
 import time
+from pathlib import Path
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -130,6 +131,27 @@ def _cmd_serve(args: argparse.Namespace) -> None:
                      state_dir=args.state_dir).serve(args.host, args.port)
 
 
+def _cmd_dashboard(args: argparse.Namespace) -> None:
+    """启动可视化控制台(实时攻防网络/防火墙/日志/AI 建议)。"""
+    ensure_dirs()
+    if not Path(args.model).exists():
+        print(f"[error] 未找到模型 {args.model}, 请先运行: python -m arkids train")
+        raise SystemExit(2)
+    # 控制台使用独立状态目录并默认“干净启动”, 避免与 simulate 的历史封禁状态混叠
+    import shutil
+    state_dir = Path(args.state_dir)
+    if not getattr(args, "no_reset", False):
+        shutil.rmtree(state_dir, ignore_errors=True)
+        state_dir.mkdir(parents=True, exist_ok=True)
+    from .dashboard import DashboardService
+    DashboardService(
+        model_path=args.model, data_path=args.data, threshold=args.threshold,
+        attacker_pool=args.attacker_pool, block_hits=args.block_hits,
+        window_sec=args.window, state_dir=str(state_dir),
+        seed=args.seed, speed=args.speed,
+    ).serve(args.host, args.port)
+
+
 def _cmd_demo(args: argparse.Namespace) -> None:
     """一键演示: 造数据 -> 训练 -> 仿真闭环。"""
     ensure_dirs()
@@ -192,6 +214,23 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--port", type=int, default=8735)
     sp.add_argument("--state-dir", default="run")
     sp.set_defaults(func=_cmd_serve)
+
+    sp = sub.add_parser("dashboard", help="启动可视化控制台(实时攻防网络/防火墙/日志/AI 建议)")
+    sp.add_argument("--model", default=str(DEFAULT_MODEL))
+    sp.add_argument("--data", default=None, help="回放流量文件(缺省使用演示集)")
+    sp.add_argument("--threshold", type=float, default=0.5)
+    sp.add_argument("--attacker-pool", type=int, default=5)
+    sp.add_argument("--block-hits", type=int, default=3)
+    sp.add_argument("--window", type=float, default=60.0)
+    sp.add_argument("--speed", type=float, default=40.0, help="每秒回放事件数")
+    sp.add_argument("--host", default="127.0.0.1")
+    sp.add_argument("--port", type=int, default=8642)
+    sp.add_argument("--state-dir", default="run/dashboard",
+                    help="运行状态目录(默认每次启动自动清空)")
+    sp.add_argument("--no-reset", action="store_true",
+                    help="不清空状态目录(跨启动保留封禁/规则)")
+    sp.add_argument("--seed", type=int, default=7)
+    sp.set_defaults(func=_cmd_dashboard)
 
     sp = sub.add_parser("demo", help="一键演示(造数据+训练+仿真)")
     sp.add_argument("--n", type=int, default=4000)

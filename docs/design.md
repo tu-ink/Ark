@@ -89,9 +89,29 @@
 
 ## 7. 接口
 
-- **CLI**：`init-demo-data / fetch-nslkdd / train / simulate / serve / demo`
+- **CLI**：`init-demo-data / fetch-nslkdd / train / simulate / serve / dashboard / demo`
 - **REST**(stdlib)：`GET /health`、`GET /defense/status`、
   `POST /detect`（41 特征 JSON）、`POST /defense/block`（强制封禁）
+- **可视化控制台**(stdlib + 原生前端)：`python -m arkids dashboard`，见 7.1
+
+### 7.1 可视化控制台(Web Dashboard)
+
+控制台在检测/防御内核之上提供一层“实时态势可视化 + 交互管理”，由三个新模块支撑：
+
+- `firewall.FirewallStore`：防火墙规则库(增删/启停/幂等去重)，与自动封禁联动写入，
+  统一导出 nftables/iptables 脚本；REST: `GET/POST /api/firewall`、`POST /api/firewall/toggle|delete`、
+  `GET /api/firewall/script`；
+- `advisor.AIAdvisor`：智能建议两级结构 —— ① `HeuristicAdvisor` 本地可解释规则引擎
+  (威胁等级评估/扫描探测/洪泛/误报-漏报平衡/规则同步检查, 输入当前态势快照, 离线可用)；
+  ② `LLMAdvisor` 可选在线增强(DeepSeek Chat API, 密钥仅从环境变量/系统凭据库读取, 不入库;
+  失败自动回退)。REST: `GET /api/advisor`、`POST /api/advisor/llm`；
+- `dashboard.LiveEngine` + `webui/`：后台线程持续回放流量(检测→证据累积→自动封禁→
+  防火墙同步), 聚合为“图节点/边 + 事件流 + KPI/趋势 + 威胁等级”快照;
+  `webui/` 为纯 HTML/CSS/JS 单页(Canvas 网络动画、攻击日志表、防火墙编辑器、AI 建议面板)。
+
+控制台每 1s 轮询 `/api/snapshot` 渲染, 支持暂停/调速(`POST /api/control`);
+默认使用独立状态目录 `run/dashboard` 并干净启动(`--no-reset` 保留跨启动状态),
+避免与 `simulate` 的历史封禁状态相互干扰。
 
 ## 8. 局限与后续工作
 
