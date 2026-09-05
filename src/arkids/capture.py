@@ -118,9 +118,9 @@ class RawPcapReader:
     抓包链路: tshark -F pcap -w - | RawPcapReader —— 真实包原样经此解析。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, linktype: int = 0) -> None:
         self._buf = bytearray()
-        self._linktype = 0
+        self._linktype = linktype
         self._header_done = False
         self.bytes_total = 0
 
@@ -225,9 +225,181 @@ class RawPcapReader:
 
 def _fmt_ipv6(b: bytes) -> str:
     words = [int.from_bytes(b[i:i + 2], "big") for i in range(0, 16, 2)]
-    # 简单 IPv6 文本(含零压缩)
     text = ":".join(f"{w:x}" for w in words)
     return re.sub(r"(^|:)(0(:|$)){2,}", "::", text, count=1) or "::"
+
+
+def _decode_eth(ts: float, pkt: bytes, linktype: int) -> PacketRecord:
+    """共享的以太网/IP 解码器(经典 pcap 与 pcapng 复用)。"""
+    pr = PacketRecord(ts=ts)
+    if linktype != 1 or len(pkt) < 14:
+        pr.info = "非以太网帧(linktype=%d)或过短" % linktype
+        pr.length = len(pkt)
+        return pr
+    ethertype = int.from_bytes(pkt[12:14], "big")
+    ip = pkt[14:]
+    if ethertype == 0x0800 and len(ip) >= 20:               # IPv4
+        ihl = (ip[0] & 0x0F) * 4
+        if len(ip) < ihl:
+            pr.length = len(pkt)
+            return pr
+        proto = ip[9]
+        pr.src = ".".join(str(b) for b in ip[12:16])
+        pr.dst = ".".join(str(b) for b in ip[16:20])
+        pr.proto = {1: "icmp", 6: "tcp", 17: "udp"}.get(proto, f"ip-{proto}")
+        pr.length = len(pkt)
+        if proto == 6 and len(ip) >= ihl + 20:              # TCP
+            pr.sport = str(int.from_bytes(ip[ihl:ihl + 2], "big"))
+            pr.dport = str(int.from_bytes(ip[ihl + 2:ihl + 4], "big"))
+            flags = ip[ihl + 13]
+            names = [(0x02, "S"), (0x10, "A"), (0x08, "P"), (0x01, "F"),
+                     (0x04, "R"), (0x20, "U")]
+            pr.flags = "".join(t for bit, t in names if flags & bit)
+            pr.info = (f"TCP {pr.sport}→{pr.dport} "
+                       f"flags={pr.flags or '-'} len={len(pkt)}")
+        elif proto == 17 and len(ip) >= ihl + 8:            # UDP
+            pr.sport = str(int.from_bytes(ip[ihl:ihl + 2], "big"))
+            pr.dport = str(int.from_bytes(ip[ihl + 2:ihl + 4], "big"))
+            pr.info = f"UDP {pr.sport}→{pr.dport} len={len(pkt)}"
+        elif proto == 1:
+            pr.info = "ICMP"
+        else:
+            pr.info = f"proto={proto} len={len(pkt)}"
+    elif ethertype == 0x86DD and len(ip) >= 40:             # IPv6
+        nxt = ip[6]
+        pr.src = _fmt_ipv6(ip[8:24])
+        pr.dst = _fmt_ipv6(ip[24:40])
+        pr.proto = {1: "icmpv6", 6: "tcp", 17: "udp"}.get(nxt, "ipv6")
+        pr.length = len(pkt)
+        pr.info = "IPv6"
+    else:
+        pr.info = f"其它链路/ethertype=0x{ethertype:04x} len={len(pkt)}"
+        pr.length = len(pkt)
+    return pr
+
+
+def _reader_for(magic: bytes):
+    """按文件头选择内置解析器: 经典 pcap(d4c3b2a1/a1b2c3d4) 或 pcapng(0a0d0d0a)。"""
+    if magic.startswith(b"\xd4\xc3\xb2\xa1") or magic.startswith(b"\xa1\xb2\xc3\xd4"):
+        return RawPcapReader()
+    if magic.startswith(b"\x0a\x0d\x0d\x0a"):
+        return RawPcapngReader()
+    return None
+
+
+class RawPcapngReader:
+    """pcapng 增量解析器(纯标准库)。
+
+    支持: Section Header Block / Interface Description Block / Enhanced Packet
+    Block / Simple Packet Block; 处理 if_tsresol / if_tsoffset; 其余块安全跳过。
+    块结构与 tshark/dpkt 等公开实现输出保持兼容, 用于无 Wireshark 时直读真实 pcapng。
+    """
+
+    SHB = 0x0A0D0D0A
+    IDB = 0x00000001
+    SPB = 0x00000003
+    EPB = 0x00000006
+    BOM = 0x1A2B3C4D
+
+    def __init__(self) -> None:
+        self._buf = bytearray()
+        self._endian = "<"          # struct 前缀
+        self._bo = "little"         # int.from_bytes 字面量('little'/'big')
+        self._linktypes: dict[int, int] = {}
+        self._resol: dict[int, float] = {}
+        self._tsoff: dict[int, float] = {}
+        self.bytes_total = 0
+
+    def feed(self, chunk: bytes) -> list[PacketRecord]:
+        self._buf += chunk
+        out: list[PacketRecord] = []
+        while len(self._buf) >= 12:
+            head = bytes(self._buf[:4])
+            if head == b"\x0a\x0d\x0d\x0a":             # SHB 魔数(字节序无关)
+                if len(self._buf) < 16:
+                    break
+                bom = int.from_bytes(bytes(self._buf[8:12]), "little")
+                if bom == self.BOM:
+                    endian = "<"
+                elif int.from_bytes(bytes(self._buf[8:12]), "big") == self.BOM:
+                    endian = ">"
+                else:
+                    raise ValueError("无法识别的 pcapng 段字节序")
+                total = struct.unpack(endian + "I", bytes(self._buf[4:8]))[0]
+                if total < 28 or len(self._buf) < total:
+                    break
+                self._endian = endian
+                self._bo = "little" if endian == "<" else "big"
+                del self._buf[:total]
+                continue
+            block_type = int.from_bytes(head, self._bo)
+            total = struct.unpack(self._endian + "I", bytes(self._buf[4:8]))[0]
+            if total < 12 or len(self._buf) < total:
+                break
+            body = bytes(self._buf[8:total - 4])
+            del self._buf[:total]
+            self.bytes_total += total
+            out.extend(self._dispatch(block_type, body))
+        return out
+
+    def _dispatch(self, btype: int, body: bytes) -> list[PacketRecord]:
+        if btype == self.IDB:
+            self._handle_idb(body)
+            return []
+        if btype == self.EPB:
+            return [self._handle_epb(body)] if len(body) >= 24 else []
+        if btype == self.SPB:
+            return [self._handle_spb(body)] if len(body) >= 4 else []
+        return []
+
+    def _handle_idb(self, body: bytes) -> None:
+        iface = len(self._linktypes)
+        self._linktypes[iface] = struct.unpack(self._endian + "H", body[:2])[0]
+        self._resol[iface] = 1e-6
+        self._tsoff[iface] = 0.0
+        off, n = 8, len(body)
+        while off + 4 <= n:
+            code = struct.unpack(self._endian + "HH", body[off:off + 4])
+            ln = code[1]
+            if code[0] == 0 or off + 4 + ln > n:
+                break
+            val = body[off + 4:off + 4 + ln]
+            if code[0] == 9 and ln >= 1:
+                v = val[0]
+                self._resol[iface] = (2.0 ** -(v & 0x7F)) if v & 0x80 else (10.0 ** -v)
+            elif code[0] == 14 and ln >= 8:
+                self._tsoff[iface] = float(struct.unpack(self._endian + "q",
+                                                         val[:8])[0])
+            off += 4 + ln + ((4 - (4 + ln) % 4) % 4)
+
+    def _handle_epb(self, body: bytes) -> PacketRecord | None:
+        iface, hi, lo, cap, _orig = struct.unpack(self._endian + "IIIII",
+                                                  body[:20])
+        pkt = body[20:20 + cap]
+        resol = self._resol.get(iface, 1e-6)
+        ts = ((hi << 32) | lo) * resol + self._tsoff.get(iface, 0.0) * resol
+        return self._decode(ts, pkt, self._linktypes.get(iface, 1))
+
+    def _handle_spb(self, body: bytes) -> PacketRecord | None:
+        orig = struct.unpack(self._endian + "I", body[:4])[0]
+        pkt = body[4:4 + orig]
+        return self._decode(0.0, pkt, self._linktypes.get(0, 1))
+
+    def _decode(self, ts: float, pkt: bytes, linktype: int) -> PacketRecord | None:
+        return _decode_eth(ts, pkt, linktype)
+
+    def feed_file(self, path: str | Path, limit: int = 0) -> list[PacketRecord]:
+        out: list[PacketRecord] = []
+        with open(path, "rb") as fh:
+            while True:
+                chunk = fh.read(1 << 20)
+                if not chunk:
+                    break
+                for rec in self.feed(chunk):
+                    out.append(rec)
+                    if limit and len(out) >= limit:
+                        return out
+        return out
 
 
 # ------------------------------------------------------------ 抓包源线程
@@ -333,10 +505,19 @@ class CaptureSource(threading.Thread):
         self._close_save()
         self._terminate()
 
-    # 无 tshark: 纯内建读取真实经典 pcap
+    # 无 tshark: 纯内建读取真实抓包文件(经典 pcap / pcapng)
     def _run_pure_pcap(self, path: Path) -> None:
-        reader = RawPcapReader()
         with open(path, "rb") as fh:
+            head = fh.read(8)
+            if not head:
+                return
+            reader = _reader_for(head)
+            if reader is None:
+                self.on_error("无法识别的抓包格式(仅支持经典 pcap 与 pcapng)")
+                return
+            for rec in reader.feed(head):
+                self.packets += 1
+                self.on_record(rec)
             while not self._stop_ev.is_set():
                 chunk = fh.read(1 << 20)
                 if not chunk:

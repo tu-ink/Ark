@@ -1,5 +1,17 @@
 # 版本历史
 
+## [0.4.0] - 2025
+
+### 新增：真实文件解析能力增强(无 tshark 也可用)
+- 内置 `RawPcapngReader`：纯标准库增量解析 **pcapng**(Wireshark 默认格式)，支持
+  SHB/IDB/EPB/SPB、if_tsresol/if_tsoffset、大端/小端序、注释等其它块安全跳过
+- 无 tshark 的回放模式自动识别 pcap/pcapng 并分发解析器
+- 用 Wireshark 官方仓库 **真实抓包样例**验证(dhcp.pcapng 4 包、大端序变体、
+  含注释+IPv6 样例)——来源与核验见 docs/third_party_tools.md
+- 单元测试新增 pcapng 增量/分块/端到端回放用例(29 项全部通过)
+- 外部工具调研文档(docs/third_party_tools.md)：scapy/dpkt/Npcap/Wireshark
+  官方来源、许可证与“为何不整体并入源码”的说明
+
 ## [0.3.0] - 2025
 
 ### 重大变更：可视化控制台改为“真实流量监控”(不再构造/播放仿真数据)

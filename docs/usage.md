@@ -137,7 +137,7 @@ python -m arkids dashboard --pcap a.pcapng --display-filter "tcp.port==443"
 **Wireshark 联动**：检测到 tshark/Wireshark 后，工具栏显示引擎版本并可一键
 “用 Wireshark 打开”当前抓包接口或已保存/加载的真实文件复核。
 无 tshark 时：可安装 [Wireshark](https://www.wireshark.org/download.html)(含 Npcap、
-以管理员运行) 启用实时抓包；或使用“回放文件”模式(内置经典 .pcap 解析器，无需 tshark)。
+以管理员运行) 启用实时抓包；或使用“回放文件”模式(内置解析器直读 .pcap/.pcapng，无需 tshark)。
 
 **在线 LLM 研判（可选）**：设置 `DEEPSEEK_API_KEY`(Windows 系统凭据库
 `reasonix:DEEPSEEK_API_KEY` 也会自动读取，密钥不入库)；`ARKIDS_LLM_INSECURE=1` 可关闭
@@ -146,7 +146,7 @@ TLS 校验。未配置/失败时自动回退规则引擎。
 ### 2.8 运行测试
 
 ```bash
-python -m unittest discover -s tests -v    # 26 项用例
+python -m unittest discover -s tests -v    # 29 项用例
 ```
 
 ## 3. 常见问题

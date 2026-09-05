@@ -16,7 +16,7 @@ from arkids.dashboard import LiveMonitor, _Handler  # noqa: E402
 
 from _util import cleanup_tmp, make_tmp  # noqa: E402
 from test_capture import (MAC_A, MAC_B, eth_frame, ipv4_tcp, ipv4_udp,  # noqa: E402
-                          make_pcap)
+                          make_pcap, make_pcapng)
 
 
 class TestDashboardApi(unittest.TestCase):
@@ -87,6 +87,28 @@ class TestDashboardApi(unittest.TestCase):
         self.assertIn("ts", any_pkt)
         meta = self._get("/api/meta")
         self.assertIn("pcap", (meta["mode"], "pcap"))
+
+    def test_upload_and_replay_pcapng(self):
+        # pcapng(Wireshark 默认格式)夹具: 无 tshark 时由内置解析器直读
+        frames = [eth_frame(MAC_A, MAC_B, ipv4_udp("10.0.0.1", "192.168.1.2",
+                                                    5000 + i, 53))
+                  for i in range(40)]
+        pcapng = make_pcapng(frames)
+        up = self._post("/api/upload-capture?name=real.pcapng", raw=pcapng)
+        self.assertTrue(up["ok"], up)
+        r = self._post("/api/capture", {"action": "start-pcap", "file": up["path"],
+                                        "display_filter": ""})
+        self.assertTrue(r["ok"], r)
+        deadline = time.time() + 15
+        snap = None
+        while time.time() < deadline:
+            snap = self._get("/api/snapshot")
+            if snap["stats"]["packets"] > 0:
+                break
+            time.sleep(0.3)
+        self.assertIsNotNone(snap)
+        self.assertGreater(snap["stats"]["packets"], 0)
+        self.assertEqual(snap["packets"][0]["proto"], "udp")
 
 
 if __name__ == "__main__":

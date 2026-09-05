@@ -6,7 +6,7 @@
     - PyInstaller 版本资源(version-file) 由构建脚本读取
 """
 
-__version__ = "0.3.0"
-VERSION_INFO = (0, 3, 0)
+__version__ = "0.4.0"
+VERSION_INFO = (0, 4, 0)
 
 __all__ = ["__version__", "VERSION_INFO"]

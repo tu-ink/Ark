@@ -15,7 +15,7 @@ ArkIDS（`arkids`）以标准评测集 **NSL-KDD** 的数据模式（41 维流�
 - **工程化**：版本单一来源、标准 pyproject 元数据、console 入口 `arkids`、
   wheel / PyInstaller exe 打包、应用图标与 favicon（详见 docs/packaging.md）。
 
-**当前版本：v0.3.0** · License: MIT · [CHANGELOG](CHANGELOG.md)
+**当前版本：v0.4.0** · License: MIT · [CHANGELOG](CHANGELOG.md)
 
 ## 快速开始
 
@@ -23,14 +23,14 @@ ArkIDS（`arkids`）以标准评测集 **NSL-KDD** 的数据模式（41 维流�
 
 发布产物在 `dist/`（或 GitHub Releases）：
 - `ArkIDS.exe`（单文件）：**双击即启动可视化控制台并自动打开浏览器**；
-- `ArkIDS-0.3.0-win64.zip`：目录版 + 说明/授权/图标。
+- `ArkIDS-0.4.0-win64.zip`：目录版 + 说明/授权/图标。
 
 ### B. 源码 / 开发者模式（Python ≥ 3.9）
 
 ```bash
 # 1) 安装依赖或直接安装 wheel
 pip install -r requirements.txt
-# 或: pip install dist/arkids-0.3.0-py3-none-any.whl   (安装后可直接用 arkids 命令)
+# 或: pip install dist/arkids-0.4.0-py3-none-any.whl   (安装后可直接用 arkids 命令)
 
 # 2) 一键演示: 生成演示数据 + 训练 + 仿真闭环
 python -m arkids demo            # 需要 PYTHONPATH=src (或安装为包后直接运行)
@@ -68,7 +68,7 @@ Ark/
 │   └── version.py         #   版本号单一来源
 ├── assets/                # 应用图标(.ico/.png/favicon)与 exe 版本资源
 ├── scripts/               # 图标生成/打包/发布脚本(make_icon|make_wheel|entry|build_release)
-├── tests/                 # 单元测试(unittest, 26 项全部通过)
+├── tests/                 # 单元测试(unittest, 29 项全部通过)
 ├── docs/                  # 文献调研/设计/使用/实验/打包文档
 ├── data/                  # 数据(自动生成或下载, 已 gitignore)
 ├── models/                # 训练产物(已 gitignore)
@@ -107,7 +107,7 @@ python -m arkids dashboard --interface "以太网"          # 直接对指定网
 
 > 实时抓包需要本机安装 [Wireshark](https://www.wireshark.org/download.html)
 > （含 tshark 与 Npcap）并以管理员运行；无 tshark 时仍可用“回放抓包文件”模式：
-> 系统内置经典 .pcap 解析器直接读取真实文件。
+> 系统内置解析器直接读取真实 .pcap/.pcapng 文件(含大端序变体)。
 > 离线算法实验(NSL-KDD/合成演示 + 训练/评估)属于另一条研究链路，请使用
 > `arkids train|simulate` 命令，与本监控模式分离。
 
@@ -150,6 +150,7 @@ curl -s -X POST localhost:8735/defense/block -H "Content-Type: application/json"
 - [使用指南](docs/usage.md)
 - [实验结果与分析](docs/experiment.md)
 - [打包与发布说明（icon / wheel / exe）](docs/packaging.md)
+- [外部工具调研与来源核验（GitHub）](docs/third_party_tools.md)
 
 ## 技术要点（对应主题关键词"智能检测 + 智能防御"）
 

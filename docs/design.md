@@ -101,8 +101,9 @@
 - `capture.py`(采集与解析)：优先调用 Wireshark/tshark 命令行引擎，实时抓包采用
   `tshark -i <网卡> -q -F pcap -w -` 原始字节管道 → 内建 `RawPcapReader` 增量解码
   (Ethernet/IPv4/IPv6/TCP/UDP/ICMP)，并**同步把真实包原样落盘 .pcap**；
-  离线回放同样由 tshark 统一读取(.pcap/.pcapng)；无 tshark 时内置解析器直接读经典
-  .pcap。支持捕获过滤器 `-f` / 显示过滤器 `-Y`(Wireshark 语法)。
+  离线回放同样由 tshark 统一读取(.pcap/.pcapng)；无 tshark 时内置解析器
+  (`RawPcapReader`/`RawPcapngReader`)直读 .pcap/.pcapng(含大端序变体)。
+  支持捕获过滤器 `-f` / 显示过滤器 `-Y`(Wireshark 语法)。
 - `FlowAnalyzer`(实时分析)：60s 滑动窗口连接/主机统计(按五元组聚合、SYN 独立按目标
   计数)，输出可解释启发式检测 —— TCP SYN 洪泛、端口扫描、高连接速率(含证据与置信度)。
 - 与外部工具联动：`open_capture_file()` 用 Wireshark GUI 打开当前接口或已保存/加载的
