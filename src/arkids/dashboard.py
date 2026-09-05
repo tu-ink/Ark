@@ -21,11 +21,13 @@ from .advisor import AIAdvisor
 from .capture import (CaptureSource, PacketRecord, find_tshark, find_wireshark,
                       list_interfaces, open_capture_file, tshark_version)
 from .config import PROJECT_ROOT
+from .exttools import ExtTools
 from .firewall import FirewallRule, FirewallStore
 from .version import __version__ as ARKIDS_VERSION
 
 WEBUI_DIR = Path(__file__).resolve().parent / "webui"
 DEFAULT_SAVE_DIR = PROJECT_ROOT / "run" / "captures"
+EXT_TOOLS = ExtTools()   # 外部安全工具联动(进程级缓存)
 MIME = {".html": "text/html; charset=utf-8", ".js": "application/javascript; charset=utf-8",
         ".css": "text/css; charset=utf-8", ".ico": "image/x-icon"}
 
@@ -51,11 +53,11 @@ def _fmt_ts(t: float) -> str:
 class LiveMonitor:
     """真实流量监控核心: 抓包线程 + 流分析 + 包/告警缓冲 + 采样。"""
 
-    def __init__(self, state_dir: str = "run", engine: str = "sniffer") -> None:
+    def __init__(self, state_dir: str = "run", engine: str = "auto") -> None:
         self.tshark = find_tshark()
         self.wireshark = find_wireshark()
-        self.engine = engine if engine in ("sniffer", "tshark") else "sniffer"
-        # 默认使用自研内置抓包引擎(免装 Wireshark/Npcap)
+        self.engine = engine if engine in ("auto", "sniffer", "tshark") else "auto"
+        # auto: 有 tshark(Wireshark) 优先用其抓包, 否则退回自研嗅探引擎
         from .sniffer import sniff_interfaces
         self.ifaces = list_interfaces(self.tshark) if self.engine == "tshark" \
             else sniff_interfaces()
@@ -87,9 +89,17 @@ class LiveMonitor:
         self.replay_done = False
 
     # ------------------------------------------------------------- 生命周期
+    def _resolve_engine(self) -> str:
+        if self.engine != "auto":
+            return self.engine
+        return "tshark" if self.tshark else "sniffer"
+
     def start_live(self, interface: str | None = None,
                    engine: str | None = None) -> dict:
         engine = engine or self.engine
+        if engine == "auto":
+            engine = self._resolve_engine()
+            self.engine = engine
         if self.source and self.source.is_alive():
             return {"ok": False, "error": "已在抓包中, 请先停止"}
         self._reset_analysis()
@@ -251,8 +261,7 @@ class LiveMonitor:
     # ------------------------------------------------------------- 快照
     def meta(self) -> dict:
         src = self.source
-        capturing = bool(src and src.is_alive())
-        # 面向 UI 的状态文案: idle / live / pcap(回放中) / replay_done / error
+        capturing = bool(src and src.is_alive())        # 面向 UI 的状态文案: idle / live / pcap(回放中) / replay_done / error
         if capturing:
             status = "live" if self.mode == "live" else "replay"
         elif self.mode == "pcap" and self.replay_done:
@@ -263,7 +272,8 @@ class LiveMonitor:
             status = "idle"
         return {
             "mode": self.mode,
-            "engine": self.engine,
+            "engine": self._resolve_engine(),
+            "engine_requested": self.engine,
             "status": status,
             "version": ARKIDS_VERSION,
             "source": self.source_label,
@@ -542,6 +552,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"kind": kind, "rows": svc.monitor.logs(kind, n)})
         elif path == "/api/selfcheck":
             self._json(svc.monitor.selfcheck())
+        elif path == "/api/ext-tools":
+            refresh = self._query().get("refresh", ["0"])[0] == "1"
+            self._json({"tools": EXT_TOOLS.list(refresh=refresh)})
         elif path == "/api/firewall":
             self._json(svc.monitor.fw.rules())
         elif path == "/api/firewall/script":
@@ -580,7 +593,11 @@ class _Handler(BaseHTTPRequestHandler):
         if body is None:
             return
         m = svc.monitor
-        if path == "/api/sample":
+        if path == "/api/ext-tools/open":
+            tool_id = str(body.get("id", ""))
+            file_path = str(body.get("file", "") or "")
+            self._json(EXT_TOOLS.open(tool_id, file_path))
+        elif path == "/api/sample":
             name = str(body.get("name", "")).strip()
             res = m.fetch_sample(name)
             if res.get("ok"):

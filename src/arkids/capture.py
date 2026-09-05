@@ -49,6 +49,38 @@ class PacketRecord:
 
 
 # ------------------------------------------------------------------ 工具发现
+def _wireshark_dir_candidates() -> list[Path]:
+    """在常见/便携位置查找 Wireshark 目录(含仓库同级工作区与磁盘根)。"""
+    cands = list(STD_DIRS)
+    bases = []
+    try:
+        from .config import PROJECT_ROOT  # noqa: PLC0415
+        bases.append(PROJECT_ROOT.parent)          # 工作区(如 D:/deepseek_work)
+    except Exception:
+        pass
+    for root in ("C:/", "D:/", "E:/"):
+        bases.append(Path(root))
+        # 常见工作区形态: <盘>:/deepseek_work/Wireshark
+        ws = Path(root) / "deepseek_work"
+        if ws.exists():
+            bases.append(ws)
+    try:
+        bases.append(Path.cwd())
+        p = Path.cwd()
+        for _ in range(4):
+            p = p.parent
+            bases.append(p)
+    except Exception:
+        pass
+    for base in bases:
+        for name in ("Wireshark", "wireshark", "WiresharkPortable",
+                     "PortableApps/WiresharkPortable"):
+            d = base / name
+            if d not in cands:
+                cands.append(d)
+    return cands
+
+
 def find_tshark() -> Path | None:
     env = os.environ.get("TSHARK_PATH") or os.environ.get("WIRESHARK_PATH")
     if env:
@@ -59,7 +91,7 @@ def find_tshark() -> Path | None:
     hit = shutil.which(TSHARK_NAMES[0]) or shutil.which(TSHARK_NAMES[1])
     if hit:
         return Path(hit)
-    for d in STD_DIRS:
+    for d in _wireshark_dir_candidates():
         p = d / "tshark.exe"
         if p.exists():
             return p
@@ -74,7 +106,7 @@ def find_wireshark() -> Path | None:
         hit = shutil.which(name)
         if hit:
             return Path(hit)
-    for d in STD_DIRS:
+    for d in _wireshark_dir_candidates():
         p = d / "Wireshark.exe"
         if p.exists():
             return p
@@ -86,8 +118,9 @@ def tshark_version(path: Path | None) -> str:
         return ""
     try:
         out = subprocess.run([str(path), "--version"], capture_output=True,
-                             text=True, timeout=10).stdout
-        return (out.splitlines() or [""])[0].strip()
+                             timeout=10).stdout
+        line = out.decode("utf-8", errors="replace").splitlines() or [""]
+        return line[0].strip()
     except Exception:
         return ""
 
@@ -97,17 +130,24 @@ def list_interfaces(tshark: Path | None) -> list[dict]:
         return []
     try:
         out = subprocess.run([str(tshark), "-D"], capture_output=True,
-                             text=True, timeout=15).stdout
+                             timeout=15).stdout
+        out = out.decode("utf-8", errors="replace")
     except Exception:
         return []
     ifaces: list[dict] = []
     for line in out.splitlines():
-        m = re.match(r"^\s*\d+\.\s*\\(.+?)\s*\((.+)\)\s*$", line)
+        # 保留完整接口名(含前导 '\\Device\\NPF_...'), 描述在圆括号内
+        m = re.match(r"^\s*\d+\.\s*(.+?)\s*\((.*)\)\s*$", line)
         if not m:
-            m = re.match(r"^\s*\d+\.\s*([^\s]+)\s*(?:\((.*)\))?\s*$", line)
+            m = re.match(r"^\s*\d+\.\s*(.+?)\s*$", line)
         if m:
-            ifaces.append({"name": m.group(1),
-                           "description": (m.group(2) or "").strip()})
+            name = m.group(1).strip()
+            # Windows 路径规范化: 兼容 '\Device\...' 前导反斜杠
+            if name.startswith("Device\\"):
+                name = "\\" + name
+            ifaces.append({"name": name,
+                           "description": (m.group(2) if m.lastindex and m.lastindex >= 2
+                                           else "").strip()})
     return ifaces
 
 
@@ -507,7 +547,8 @@ class CaptureSource(threading.Thread):
                 p = Path(self.target)
                 if not p.exists():
                     raise RuntimeError(f"抓包文件不存在: {self.target}")
-                if self.tshark is not None:
+                # 优先内置解析器直读(无需子进程); 指定了显示过滤器时才用 tshark 解码
+                if self.tshark is not None and self.display_filter:
                     self._run_pipe(self._replay_cmd())
                 else:
                     self._run_pure_pcap(p)

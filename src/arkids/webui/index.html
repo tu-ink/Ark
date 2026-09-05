@@ -44,12 +44,13 @@
       </div>
       <div class="srcpane" id="paneLive">
         <select id="engineSel" title="抓包引擎">
-          <option value="sniffer">内置抓包引擎(免安装工具)</option>
-          <option value="tshark">传统 tshark(可选)</option>
+          <option value="auto">引擎: 自动(优先 Wireshark)</option>
+          <option value="tshark">传统 tshark(Wireshark)</option>
+          <option value="sniffer">内置嗅探(原始套接字)</option>
         </select>
-        <span class="hint" id="engineNote">捕获本机全部 IPv4 流量 · 需要管理员权限(右键以管理员运行) · 无需安装 Wireshark/Npcap</span>
-        <select id="iface" title="tshark 模式选择网卡(内置模式忽略)" class="hidden"><option>内置模式无需选网卡</option></select>
-        <button class="btn" id="btnRefreshIface" title="tshark 模式刷新网卡(内置模式忽略)">刷新</button>
+        <span class="hint" id="engineNote">自动: 检测到 Wireshark/tshark 则用之; 否则自研内置引擎。</span>
+        <select id="iface" title="tshark 模式选择网卡" class="hidden"><option>请选网卡</option></select>
+        <button class="btn" id="btnRefreshIface" title="tshark 模式刷新网卡">刷新</button>
         <input id="capFilter" placeholder="过滤器(tshark 模式生效), 如: tcp port 443" spellcheck="false">
         <button class="btn primary" id="btnStartLive">开始抓包</button>
       </div>
@@ -200,6 +201,13 @@
             <button class="btn" id="btnExpPkt">封包 CSV(服务端全量)</button>
             <button class="btn" id="btnExpTh">威胁 CSV</button>
           </div>
+        </div>
+        <div class="panel">
+          <h2>外部工具联动(工作区已装工具) <button class="btn small" id="btnReloadExt">刷新</button></h2>
+          <p class="note">自动发现并一键启动：Wireshark(抓包/复核) · Burp Suite(代理调试) ·
+             蚁剑(会话管理) · 010 Editor(十六进制/模板) · CyberChef(解密/编解码)。
+             抓包文件可在 “Wireshark / 010 Editor” 中打开复核。</p>
+          <ul class="chklist" id="extList"><li class="empty">正在扫描工作区工具…</li></ul>
         </div>
         <div class="panel">
           <h2>关于</h2>

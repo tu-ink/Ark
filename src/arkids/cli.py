@@ -146,7 +146,7 @@ def _cmd_dashboard(args: argparse.Namespace) -> None:
         open_browser = False
     from .dashboard import DashboardService
     svc = DashboardService(state_dir=str(state_dir),
-                           engine=getattr(args, "engine", "sniffer"))
+                           engine=getattr(args, "engine", "auto"))
     if args.auto_block:
         svc.monitor.auto_block = True
     if args.cap_filter:
@@ -225,9 +225,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--state-dir", default="run")
     sp.set_defaults(func=_cmd_serve)
 
-    sp = sub.add_parser("dashboard", help="启动真实流量监控控制台(内置抓包引擎/回放真实 pcap)")
-    sp.add_argument("--engine", default="sniffer", choices=("sniffer", "tshark"),
-                    help="抓包引擎: sniffer=自研原始套接字(默认, 免安装); tshark=传统模式")
+    sp = sub.add_parser("dashboard", help="启动真实流量监控控制台(Wireshark/内置嗅探/回放)")
+    sp.add_argument("--engine", default="auto", choices=("auto", "sniffer", "tshark"),
+                    help="抓包引擎: auto=有 Wireshark/tshark 则用之, 否则内置原始套接字;"
+                         " sniffer=自研; tshark=传统")
     sp.add_argument("--interface", default=None,
                     help="网卡(tshark 传统模式使用; 内置引擎忽略, 捕获全部 IPv4)")
     sp.add_argument("--pcap", default=None, help="回放真实抓包文件(.pcap/.pcapng)")

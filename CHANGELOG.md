@@ -1,5 +1,17 @@
 # 版本历史
 
+## [0.7.0] - 2025
+
+### 抓包修复 + 外部安全工具联动整合
+- 修复“抓包无法使用”: 工具发现扩大到工作区/便携位置(如 D:/deepseek_work/Wireshark、
+  <盘>:/Wireshark、cwd 祖先目录); tshark 输出改 UTF-8 容错; 接口名保留完整
+  `\Device\NPF_...`; 引擎默认 auto=优先已装 Wireshark/tshark, 否则自研嗅探
+- 回放策略: 无显示过滤器时优先内置解析器直读(无子进程更稳); 指定 `-Y` 才走 tshark
+- 新增 exttools.py: 自动发现 工作区 Wireshark/Burp Suite/蚁剑/010 Editor/CyberChef
+  并一键启动; 抓包文件可送 Wireshark/010 复核; GET /api/ext-tools、POST /api/ext-tools/open
+- UI: 工具箱新增“外部工具联动”卡片; 引擎选择支持自动(auto)
+- 测试 33 项通过(含外部工具列表端点); 文档/版本 0.7.0
+
 ## [0.6.0] - 2025
 
 ### 自研抓包引擎: 不再依赖外部抓包工具(Wireshark/tshark/Npcap)

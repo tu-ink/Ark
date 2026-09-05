@@ -123,6 +123,14 @@ class TestDashboardApi(unittest.TestCase):
         self.assertIn("rows", logs)
         self.assertIsInstance(logs["rows"], list)
 
+    def test_ext_tools_list(self):
+        data = self._get("/api/ext-tools")
+        self.assertIn("tools", data)
+        for t in data["tools"]:
+            self.assertIn("id", t)
+            self.assertIn("found", t)
+            self.assertIn("name", t)
+
 
 if __name__ == "__main__":
     unittest.main()

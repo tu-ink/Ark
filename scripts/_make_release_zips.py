@@ -4,7 +4,7 @@ from pathlib import Path
 
 DIST = Path("dist")
 ROOT = Path(".")
-VER = "0.6.0"
+VER = "0.7.0"
 NOTE = """ArkIDS v%(v)s — 基于人工智能的网络攻击智能检测与防御系统
 ========================================================
 双击 ArkIDS.exe 即进入可视化控制台(实时攻防网络/防火墙编辑/攻击日志/AI 建议)，

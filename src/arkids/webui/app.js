@@ -27,6 +27,7 @@ const els = {
   btnScript: $("btnScript"), fwScript: $("fwScript"),
   btnSelfcheck: $("btnSelfcheck"), chkHead: $("chkHead"), chkList: $("chkList"),
   btnCopyDiag: $("btnCopyDiag"), sampleBtns: $("sampleBtns"), sampleNote: $("sampleNote"),
+  btnReloadExt: $("btnReloadExt"), extList: $("extList"),
   btnExpPkt: $("btnExpPkt"), btnExpTh: $("btnExpTh"),
   aboutVer: $("aboutVer"), aboutTools: $("aboutTools"), llmBadge: $("llmBadge"),
   btnResetSession: $("btnResetSession"), logoMark: $("logoMark"),
@@ -149,12 +150,15 @@ function fillInterfaces(list) {
   });
 }
 function syncEngineUI() {
-  const builtin = (els.engineSel.value || "sniffer") === "sniffer";
-  els.iface.classList.toggle("hidden", builtin);
-  els.btnRefreshIface.classList.toggle("hidden", builtin);
-  els.engineNote.textContent = builtin
-    ? "捕获本机全部 IPv4 流量 · 需管理员(右键以管理员运行) · 无需安装任何抓包工具"
-    : "传统模式需安装 Wireshark/Npcap; 捕获过滤器仅此模式生效(内置模式忽略)";
+  const eng = els.engineSel.value || "auto";
+  const needIface = eng === "tshark";
+  els.iface.classList.toggle("hidden", !needIface);
+  els.btnRefreshIface.classList.toggle("hidden", !needIface);
+  els.engineNote.textContent = eng === "auto"
+    ? "自动选择: 检测到 Wireshark/tshark 则用之; 否则自研内置引擎(需管理员)"
+    : eng === "tshark"
+      ? "传统模式需 Wireshark/tshark 与 Npcap; 捕获过滤器仅此模式生效"
+      : "自研内置嗅探: 捕获本机全部 IPv4 · 需管理员(右键以管理员运行) · 免安装工具";
 }
 async function refreshMeta({ silent } = {}) {
   try {
@@ -472,6 +476,32 @@ async function runSelfcheck() {
   finally { els.btnSelfcheck.disabled = false; }
 }
 
+async function loadExtTools() {
+  try {
+    const { tools } = await api("/api/ext-tools");
+    els.extList.innerHTML = "";
+    if (!tools || !tools.length) {
+      const li = document.createElement("li");
+      li.className = "empty"; li.textContent = "未发现外部工具";
+      els.extList.appendChild(li); return;
+    }
+    tools.forEach((t) => {
+      const li = document.createElement("li");
+      li.className = t.found ? "ok" : "warn";
+      const fileNow = state.meta && state.meta.saved_path;
+      const canOpenFile = (t.id === "wireshark" || t.id === "hex010") && !!fileNow;
+      li.innerHTML = `<div class="row"><span class="mark">${t.found ? "✓" : "!"}</span>
+        <div><b>${esc(t.name)}</b>
+        <span class="det">${esc(t.note)}${t.path ? " · " + esc(t.path) : ""}</span>
+        <div class="btns">
+          <button class="btn small" data-ext="${esc(t.id)}" data-act="open" ${t.found ? "" : "disabled"}>启动</button>
+          ${canOpenFile ? `<button class="btn small" data-ext="${esc(t.id)}" data-act="file" data-file="${esc(fileNow)}">打开当前抓包</button>` : ""}
+        </div></div></div>`;
+      els.extList.appendChild(li);
+    });
+  } catch (e) { console.warn("ext", e); }
+}
+
 /* ===================================================== 事件绑定 */
 function bindEvents() {
   els.modeLive.addEventListener("click", () => setMode("live"));
@@ -532,6 +562,21 @@ function bindEvents() {
   });
   // 工具箱
   els.btnSelfcheck.addEventListener("click", runSelfcheck);
+  els.btnReloadExt.addEventListener("click", async () => {
+    await api("/api/ext-tools?refresh=1");
+    await loadExtTools();
+    toast("外部工具已重新扫描", "ok");
+  });
+  els.extList.addEventListener("click", async (ev) => {
+    const btn = ev.target.closest("button[data-ext]");
+    if (!btn) return;
+    try {
+      const r = await postJson("/api/ext-tools/open",
+        { id: btn.dataset.ext, file: btn.dataset.file || "" });
+      if (!r.ok) toast(r.error || "启动失败", "");
+      else toast("已启动: " + btn.dataset.ext, "ok");
+    } catch (e) { toast("启动失败: " + e.message, ""); }
+  });
   els.btnCopyDiag.addEventListener("click", async () => {
     const txt = state.diag || "未检测";
     try { await navigator.clipboard.writeText(txt); toast("诊断已复制", "ok"); }
@@ -647,6 +692,7 @@ window.addEventListener("beforeunload", () => { try {
   syncEngineUI();
   await refreshMeta();
   await loadFirewall();
+  await loadExtTools();
   refreshAdviceBadge();
   // 关于
   els.aboutVer.textContent = state.meta ? "v" + state.meta.version : "—";
