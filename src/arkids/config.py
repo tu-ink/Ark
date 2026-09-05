@@ -1,11 +1,17 @@
 """全局配置: 数据模式常量、攻击类别映射、路径约定。"""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------- 路径约定
-SRC_DIR = Path(__file__).resolve().parent            # src/arkids
-PROJECT_ROOT = SRC_DIR.parent.parent                 # 仓库根目录
+SRC_DIR = Path(__file__).resolve().parent            # arkids 包目录
+if getattr(sys, "frozen", False):
+    # PyInstaller 冻结环境: 包与默认模型/webui 资源同置于解包根目录
+    # (onedir 位于 <exe目录>/_internal; onefile 位于 _MEIxxxxx)
+    PROJECT_ROOT = SRC_DIR.parent
+else:
+    PROJECT_ROOT = SRC_DIR.parent.parent             # 源码仓库根目录
 DATA_DIR = PROJECT_ROOT / "data"                     # 原始数据(已 gitignore)
 MODELS_DIR = PROJECT_ROOT / "models"                 # 训练产物(*.joblib)
 RUN_DIR = PROJECT_ROOT / "run"                       # 运行期产物: 告警/封禁/日志

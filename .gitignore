@@ -6,6 +6,10 @@ venv/
 *.egg-info/
 .pytest_cache/
 
+# ---- 构建产物 ----
+/dist/
+/build/
+
 # ---- 数据与模型产物(体积大/可再生成) ----
 data/*.csv
 data/nslkdd/

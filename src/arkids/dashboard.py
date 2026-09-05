@@ -32,7 +32,8 @@ DEFAULT_DATA = DATA_DIR / "demo_eval.csv"
 SERVER_IP = "192.168.1.10"
 USER_POOL = 6
 MIME = {".html": "text/html; charset=utf-8", ".js": "application/javascript; charset=utf-8",
-        ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml"}
+        ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml",
+        ".ico": "image/x-icon"}
 
 
 def _mk_event(seq: int, src: str, verdict: str, score: float,
@@ -272,7 +273,7 @@ class _Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/health":
             self._json({"status": "ok", "service": "arkids-dashboard"})
-        elif path in ("/", "/index.html", "/app.js", "/style.css"):
+        elif path in ("/", "/index.html", "/app.js", "/style.css", "/favicon.ico"):
             self._static(path)
         elif path == "/api/snapshot":
             self._json(svc.live.snapshot())
@@ -380,11 +381,17 @@ class DashboardService:
                                block_hits=block_hits, window_sec=window_sec,
                                state_dir=state_dir, seed=seed, speed=speed)
 
-    def serve(self, host: str = "127.0.0.1", port: int = 8642) -> None:
+    def serve(self, host: str = "127.0.0.1", port: int = 8642,
+              open_browser: bool = False) -> None:
         self.live.start()
         httpd = ThreadingHTTPServer((host, port), _Handler)
         httpd.service = self  # type: ignore[attr-defined]
-        print(f"ArkIDS 可视化控制台: http://{host}:{port}  (Ctrl+C 退出)")
+        url = f"http://{host}:{port}"
+        print(f"ArkIDS 可视化控制台: {url}  (Ctrl+C 退出)")
+        if open_browser:
+            import threading as _t
+            import webbrowser as _wb
+            _t.Timer(1.2, lambda: _wb.open(url)).start()
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

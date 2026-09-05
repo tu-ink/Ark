@@ -11,13 +11,26 @@ ArkIDS（`arkids`）以标准评测集 **NSL-KDD** 的数据模式（41 维流�
 
 - 全部核心依赖仅 `numpy / pandas / scikit-learn / joblib`，REST 服务与仿真仅用 Python 标准库；
 - 内置 **可离线复现的合成演示数据集**（与 NSL-KDD 同构），无网也可一键跑通全流程；
-- 提供 `demo` 一键命令：造数据 → 训练 → 攻击仿真 → 防御联动演示。
+- 提供 `demo` 一键命令：造数据 → 训练 → 攻击仿真 → 防御联动演示；
+- **工程化**：版本单一来源、标准 pyproject 元数据、console 入口 `arkids`、
+  wheel / PyInstaller exe 打包、应用图标与 favicon（详见 docs/packaging.md）。
+
+**当前版本：v0.2.0** · License: MIT · [CHANGELOG](CHANGELOG.md)
 
 ## 快速开始
 
+### A. 直接使用（免装 Python）—— 打包版
+
+发布产物在 `dist/`（或 GitHub Releases）：
+- `ArkIDS.exe`（单文件）：**双击即启动可视化控制台并自动打开浏览器**；
+- `ArkIDS-0.2.0-win64.zip`：目录版 + 说明/授权/图标。
+
+### B. 源码 / 开发者模式（Python ≥ 3.9）
+
 ```bash
-# 1) 安装依赖(Python >= 3.9)
+# 1) 安装依赖或直接安装 wheel
 pip install -r requirements.txt
+# 或: pip install dist/arkids-0.2.0-py3-none-any.whl   (安装后可直接用 arkids 命令)
 
 # 2) 一键演示: 生成演示数据 + 训练 + 仿真闭环
 python -m arkids demo            # 需要 PYTHONPATH=src (或安装为包后直接运行)
@@ -31,8 +44,7 @@ python -m arkids dashboard --port 8642                   # 可视化控制台(We
 ```
 
 > 提示：从仓库根目录运行时先设置 `PYTHONPATH=src`（Windows PowerShell：
-> `$env:PYTHONPATH="$PWD\src"`）；或 `pip install -e .`（需在仓库根添加 pyproject/setup，
-> 详见 docs/usage.md）。
+> `$env:PYTHONPATH="$PWD\src"`），或安装为包后直接用 `arkids` 命令（见 docs/packaging.md）。
 
 ## 目录结构
 
@@ -51,12 +63,21 @@ Ark/
 │   ├── webui/             #   前端静态资源(HTML/CSS/JS, 原生无框架)
 │   ├── simulate.py        #   攻击仿真与检测-防御回放
 │   ├── server.py          #   极简 REST 服务(stdlib)
-│   └── cli.py             #   命令行入口
+│   ├── cli.py             #   命令行入口
+│   └── version.py         #   版本号单一来源
+├── assets/                # 应用图标(.ico/.png/favicon)与 exe 版本资源
+├── scripts/               # 图标生成/打包/发布脚本(make_icon|make_wheel|entry|build_release)
 ├── tests/                 # 单元测试(unittest, 20 项全部通过)
-├── docs/                  # 文献调研/设计/使用/实验文档
+├── docs/                  # 文献调研/设计/使用/实验/打包文档
 ├── data/                  # 数据(自动生成或下载, 已 gitignore)
 ├── models/                # 训练产物(已 gitignore)
-└── run/                   # 运行产物: 告警/封禁/规则(已 gitignore)
+├── run/                   # 运行产物: 告警/封禁/规则(已 gitignore)
+├── dist/                  # 打包产物: wheel / ArkIDS.exe / win64 zip(已 gitignore)
+├── pyproject.toml         # PEP 621 工程元数据 + 入口 + 包数据
+├── arkids.spec            # PyInstaller 单文件版打包配置
+├── arkids_onedir.spec     # PyInstaller 目录版打包配置
+├── CHANGELOG.md           # 版本历史
+└── LICENSE                # MIT
 ```
 
 ## 可视化控制台（Web）

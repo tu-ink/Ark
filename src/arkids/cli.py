@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -143,13 +144,18 @@ def _cmd_dashboard(args: argparse.Namespace) -> None:
     if not getattr(args, "no_reset", False):
         shutil.rmtree(state_dir, ignore_errors=True)
         state_dir.mkdir(parents=True, exist_ok=True)
+    # 打包版(exe)双击默认打开浏览器; 也可用 ARKIDS_OPEN_BROWSER=1 / --no-browser 控制
+    open_browser = bool(getattr(sys, "frozen", False)) or \
+        os.environ.get("ARKIDS_OPEN_BROWSER") == "1"
+    if getattr(args, "no_browser", False):
+        open_browser = False
     from .dashboard import DashboardService
     DashboardService(
         model_path=args.model, data_path=args.data, threshold=args.threshold,
         attacker_pool=args.attacker_pool, block_hits=args.block_hits,
         window_sec=args.window, state_dir=str(state_dir),
         seed=args.seed, speed=args.speed,
-    ).serve(args.host, args.port)
+    ).serve(args.host, args.port, open_browser=open_browser)
 
 
 def _cmd_demo(args: argparse.Namespace) -> None:
@@ -229,6 +235,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="运行状态目录(默认每次启动自动清空)")
     sp.add_argument("--no-reset", action="store_true",
                     help="不清空状态目录(跨启动保留封禁/规则)")
+    sp.add_argument("--no-browser", action="store_true",
+                    help="不自动打开浏览器(打包版双击默认自动打开)")
     sp.add_argument("--seed", type=int, default=7)
     sp.set_defaults(func=_cmd_dashboard)
 
@@ -242,7 +250,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    raw = list(argv) if argv is not None else sys.argv[1:]
+    # 打包版(exe)双击运行: 无参数时默认进入可视化控制台并打开浏览器
+    if not raw and getattr(sys, "frozen", False):
+        raw = ["dashboard"]
+    args = build_parser().parse_args(raw)
     args.func(args)
     return 0
 
