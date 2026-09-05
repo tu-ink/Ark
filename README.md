@@ -140,6 +140,7 @@ curl -s -X POST localhost:8735/defense/block -H "Content-Type: application/json"
 - [系统设计说明](docs/design.md)
 - [使用指南](docs/usage.md)
 - [实验结果与分析](docs/experiment.md)
+- [打包与发布说明（icon / wheel / exe）](docs/packaging.md)
 
 ## 技术要点（对应主题关键词"智能检测 + 智能防御"）
 
