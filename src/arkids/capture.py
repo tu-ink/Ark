@@ -151,6 +151,39 @@ def list_interfaces(tshark: Path | None) -> list[dict]:
     return ifaces
 
 
+def probe_interfaces_for_traffic(tshark: Path | None,
+                                 ifaces: list[dict],
+                                 per_sec: float = 1.2,
+                                 max_sec: float = 4.0) -> list[dict]:
+    """短时抓包探测各接口是否有真实流量, 按抓包数排序(用于“自动选有流量的网卡”)。
+
+    返回: 在 ifaces 基础上附带 "probe_packets" 的列表(探测失败记 0)。
+    """
+    out: list[dict] = []
+    if not tshark:
+        return [dict(i, probe_packets=0) for i in ifaces]
+    for i in ifaces:
+        name = i["name"]
+        try:
+            proc = subprocess.run(
+                [str(tshark), "-i", name, "-q", "-c", "40", "-a",
+                 f"duration:{per_sec}"],
+                capture_output=True, timeout=int(max_sec))
+            msg = (proc.stdout or b"").decode("utf-8", errors="replace") + \
+                  (proc.stderr or b"").decode("utf-8", errors="replace")
+            m = re.search(r"(\d+)\s+packets captured", msg)
+            count = int(m.group(1)) if m else 0
+        except Exception:
+            count = 0
+        out.append(dict(i, probe_packets=count))
+    # 有流量者优先(按包数降序), 其余保持原枚举顺序
+    order = {i["name"]: idx for idx, i in enumerate(ifaces)}
+    out.sort(key=lambda x: (x["probe_packets"] <= 0,
+                            -x["probe_packets"],
+                            order.get(x["name"], 0)))
+    return out
+
+
 # ------------------------------------------------------------ pcap 读取器(内建)
 class RawPcapReader:
     """增量式经典 pcap(以太网)解析: 适配管道流与文件。

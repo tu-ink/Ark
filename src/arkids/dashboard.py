@@ -19,7 +19,8 @@ from pathlib import Path
 
 from .advisor import AIAdvisor
 from .capture import (CaptureSource, PacketRecord, find_tshark, find_wireshark,
-                      list_interfaces, open_capture_file, tshark_version)
+                      list_interfaces, open_capture_file,
+                      probe_interfaces_for_traffic, tshark_version)
 from .config import PROJECT_ROOT
 from .exttools import ExtTools
 from .firewall import FirewallRule, FirewallStore
@@ -87,6 +88,7 @@ class LiveMonitor:
         self._packets_buf: deque[float] = deque(maxlen=240)
         self._dets_buf: deque[float] = deque(maxlen=240)
         self.replay_done = False
+        self.last_auto_iface = ""
 
     # ------------------------------------------------------------- 生命周期
     def _resolve_engine(self) -> str:
@@ -113,15 +115,19 @@ class LiveMonitor:
                                  "建议改用默认的内置抓包引擎(免安装)。"}
             self.ifaces = list_interfaces(self.tshark)
             if not interface:
-                cands = [i["name"] for i in self.ifaces
-                         if "loopback" not in i["description"].lower()
-                         and "virtual" not in i["description"].lower()]
-                interface = cands[0] if cands else \
-                    (self.ifaces[0]["name"] if self.ifaces else None)
+                # 自动: 逐个接口短时探测, 优先“当前有流量”的网卡(修复“抓不到包”)
+                probed = probe_interfaces_for_traffic(self.tshark, self.ifaces,
+                                                      per_sec=1.2)
+                self.ifaces = probed
+                busy = next((p for p in probed if p.get("probe_packets", 0) > 0), None)
+                interface = (busy or probed[0] if probed else None)
+                if isinstance(interface, dict):
+                    interface = interface["name"]
             if not interface:
                 return {"ok": False,
                         "error": "未检测到可用网卡(tshark -D 为空, 可能缺 Npcap/管理员)。"}
             self.source_label = f"tshark 抓包: {interface}"
+            self.last_auto_iface = interface
             self.source = CaptureSource(
                 mode="live", target=interface, cap_filter=self.cap_filter,
                 tshark=self.tshark, save_dir=str(DEFAULT_SAVE_DIR),
@@ -300,8 +306,8 @@ class LiveMonitor:
         recent_det = [d for d in self.detections if now - d.get("ts", 0) < 120]
         level = "critical" if recent_crit else ("warning" if recent_det else "safe")
         with self._lock:
-            packets = list(self.packets)[-220:]
-            detections = list(self.detections)[:120]
+            packets = list(self.packets)[-500:]
+            detections = list(self.detections)[:200]
         nodes, links = self._graph()
         flows = self.analyzer.flows
         return {

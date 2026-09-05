@@ -149,6 +149,24 @@ class ExtTools:
                     "note": "加解密/编码/解码工具箱" if chef_html
                     else "未发现(CyberChef 目录)",
                     "exe": ""})
+        # 仅标记“程序实际使用”的工具(其余不参与自动联动, 避免无意义占位)
+        usage = {
+            "wireshark": (True, "open_capture",
+                          "抓包引擎 + 用 Wireshark 打开当前抓包复核"),
+            "hex010": (True, "open_capture",
+                       "用 010 Editor 打开当前抓包查看十六进制/模板"),
+            "cyberchef": (True, "decode",
+                          "打开 CyberChef 对载荷做解码/解密分析"),
+            "burp": (False, "", "未纳入自动联动(需要时手动启动)"),
+            "antsword": (False, "", "未纳入自动联动(需要时手动启动)"),
+        }
+        for t in out:
+            integ, role, unote = usage.get(t["id"], (False, "", ""))
+            t["integrated"] = integ
+            t["role"] = role
+            base = t["note"] or ""
+            t["note"] = (base + (" · " if base else "")) + unote if not integ \
+                else base + (" · " + unote if base and integ else unote)
         return out
 
     # ------------------------------------------------------------ 启动

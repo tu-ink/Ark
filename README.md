@@ -15,7 +15,7 @@ ArkIDS（`arkids`）以标准评测集 **NSL-KDD** 的数据模式（41 维流�
 - **工程化**：版本单一来源、标准 pyproject 元数据、console 入口 `arkids`、
   wheel / PyInstaller exe 打包、应用图标与 favicon（详见 docs/packaging.md）。
 
-**当前版本：v0.7.0** · License: MIT · [CHANGELOG](CHANGELOG.md)
+**当前版本：v0.8.0** · License: MIT · [CHANGELOG](CHANGELOG.md)
 
 ## 快速开始
 
@@ -23,14 +23,14 @@ ArkIDS（`arkids`）以标准评测集 **NSL-KDD** 的数据模式（41 维流�
 
 发布产物在 `dist/`（或 GitHub Releases）：
 - `ArkIDS.exe`（单文件）：**双击即启动可视化控制台并自动打开浏览器**；
-- `ArkIDS-0.7.0-win64.zip`：目录版 + 说明/授权/图标。
+- `ArkIDS-0.8.0-win64.zip`：目录版 + 说明/授权/图标。
 
 ### B. 源码 / 开发者模式（Python ≥ 3.9）
 
 ```bash
 # 1) 安装依赖或直接安装 wheel
 pip install -r requirements.txt
-# 或: pip install dist/arkids-0.7.0-py3-none-any.whl   (安装后可直接用 arkids 命令)
+# 或: pip install dist/arkids-0.8.0-py3-none-any.whl   (安装后可直接用 arkids 命令)
 
 # 2) 一键演示: 生成演示数据 + 训练 + 仿真闭环
 python -m arkids demo            # 需要 PYTHONPATH=src (或安装为包后直接运行)

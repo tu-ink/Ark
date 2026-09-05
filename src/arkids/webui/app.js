@@ -328,51 +328,75 @@ function addEmptyRow(body, text) {
   tr.appendChild(td); body.appendChild(tr);
 }
 function protoOf(p) { return p.proto || "ip"; }
-
-function renderMini(snap) {
-  const list = (snap.packets || []).slice(-10).reverse();
-  els.miniPktBody.innerHTML = "";
-  if (!list.length) addEmptyRow(els.miniPktBody, "等待真实流量…");
-  list.forEach((p) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${p.num || p.seq || "-"}</td><td>${esc(p.src)}</td>` +
-      `<td>${esc(p.dst)}</td><td>${esc(protoOf(p))}</td>` +
-      `<td>${esc(p.dport || "-")}</td>`;
-    els.miniPktBody.appendChild(tr);
-  });
+function pktMatches(p, q, proto) {
+  if (proto === "其他") {
+    if (["tcp", "udp", "icmp", "icmpv6"].includes(protoOf(p))) return false;
+  } else if (proto && protoOf(p) !== proto) return false;
+  if (q && ![p.src, p.dst, protoOf(p), p.sport, p.dport, p.flags]
+      .join(" ").toLowerCase().includes(q)) return false;
+  return true;
 }
-function renderPacketsFull() {
-  const q = els.pktSearch.value.trim().toLowerCase();
-  const proto = els.pktProto.value;
-  let list = (state.snap && state.snap.packets) || [];
-  list = list.slice().reverse().filter((p) => {
-    if (proto === "其他") { return !["tcp", "udp", "icmp", "icmpv6"].includes(protoOf(p)); }
-    if (proto && protoOf(p) !== proto) return false;
-    if (q) { return [p.src, p.dst, protoOf(p), p.sport, p.dport, p.flags]
-      .join(" ").toLowerCase().includes(q); }
-    return true;
-  });
-  state.pktShown = list;
-  clearTable(els.pktBody);
-  if (!list.length) { addEmptyRow(els.pktBody, "没有匹配的数据包(先开始抓包/回放)"); return; }
-  list.slice(0, 500).forEach((p) => {
-    const tr = document.createElement("tr");
-    const synOnly = p.flags && p.flags.includes("S") && !p.flags.includes("A");
-    tr.innerHTML =
-      `<td>${p.num || p.seq || "-"}</td><td>${timeStr(p.ts)}</td>` +
-      `<td>${esc(p.src)}</td><td>${esc(p.dst)}</td><td>${esc(protoOf(p))}</td>` +
-      `<td>${esc(p.sport || "-")}</td><td>${esc(p.dport || "-")}</td>` +
-      `<td class="${synOnly ? "warn" : ""}">${esc(p.flags || "-")}</td><td>${p.length ?? "-"}</td>`;
-    els.pktBody.appendChild(tr);
-  });
+function pktRow(p) {
+  const tr = document.createElement("tr");
+  const synOnly = p.flags && p.flags.includes("S") && !p.flags.includes("A");
+  tr.innerHTML =
+    `<td>${p.num || p.seq || "-"}</td><td>${timeStr(p.ts)}</td>` +
+    `<td>${esc(p.src)}</td><td>${esc(p.dst)}</td><td>${esc(protoOf(p))}</td>` +
+    `<td>${esc(p.sport || "-")}</td><td>${esc(p.dport || "-")}</td>` +
+    `<td class="${synOnly ? "warn" : ""}">${esc(p.flags || "-")}</td><td>${p.length ?? "-"}</td>`;
+  return tr;
 }
-function incPackets() {
+function miniRow(p) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td>${p.num || p.seq || "-"}</td><td>${esc(p.src)}</td>` +
+    `<td>${esc(p.dst)}</td><td>${esc(protoOf(p))}</td>` +
+    `<td>${esc(p.dport || "-")}</td>`;
+  return tr;
+}
+/* 增量追加(避免每 1s 整表重建造成闪烁/滚动重置 —— 修复日志页 BUG) */
+function appendNewPackets(cap = 500) {
   const snap = state.snap;
   if (!snap || !snap.packets || !snap.packets.length) return;
   const newest = snap.packets[snap.packets.length - 1];
   if (state.lastPktSeq >= newest.seq) return;
+  const old = state.lastPktSeq;
   state.lastPktSeq = newest.seq;
-  if (active() === "packets") renderPacketsFull();
+  const fresh = snap.packets.filter((p) => p.seq > old);
+  fresh.forEach((p) => {
+    if (active() === "packets" &&
+        pktMatches(p, els.pktSearch.value.trim().toLowerCase(), els.pktProto.value)) {
+      els.pktBody.prepend(pktRow(p));
+      state.pktShown.unshift(p);
+      while (els.pktBody.childNodes.length > cap + 1)
+        els.pktBody.removeChild(els.pktBody.lastChild);
+      while (state.pktShown.length > cap) state.pktShown.pop();
+    }
+  });
+  if (active() === "overview") {
+    fresh.slice(-10).forEach((p) => {
+      els.miniPktBody.prepend(miniRow(p));
+      const rows = els.miniPktBody.querySelectorAll("tr:not(.emptyrow)");
+      for (let i = rows.length; i > 12; i--) rows[rows.length - 1].remove();
+    });
+    const empt = els.miniPktBody.querySelector(".emptyrow");
+    if (empt) empt.remove();
+  }
+}
+function renderPacketsFull() {
+  const q = els.pktSearch.value.trim().toLowerCase();
+  const proto = els.pktProto.value;
+  let list = ((state.snap && state.snap.packets) || []).slice()
+    .reverse().filter((p) => pktMatches(p, q, proto));
+  state.pktShown = list;
+  clearTable(els.pktBody);
+  if (!list.length) { addEmptyRow(els.pktBody, "没有匹配的数据包(先开始抓包/回放)"); return; }
+  list.slice(0, 500).forEach((p) => els.pktBody.appendChild(pktRow(p)));
+  if (list.length) state.lastPktSeq = Math.max(state.lastPktSeq,
+    ...snapNewestSeq());
+}
+function snapNewestSeq() {
+  const pk = (state.snap && state.snap.packets) || [];
+  return pk.length ? [pk[pk.length - 1].seq] : [state.lastPktSeq];
 }
 function blockIp(ip, note) {
   return postJson("/api/firewall", { src_ip: ip, action: "deny", protocol: "any",
@@ -480,22 +504,25 @@ async function loadExtTools() {
   try {
     const { tools } = await api("/api/ext-tools");
     els.extList.innerHTML = "";
-    if (!tools || !tools.length) {
+    // 仅展示“程序实际使用”的工具模块(其余如 Burp/蚁剑不参与自动联动)
+    const shown = (tools || []).filter((t) => t.integrated);
+    if (!shown.length) {
       const li = document.createElement("li");
-      li.className = "empty"; li.textContent = "未发现外部工具";
+      li.className = "empty";
+      li.textContent = "未发现已整合的工具(可选工具 Burp/蚁剑 不参与自动联动)";
       els.extList.appendChild(li); return;
     }
-    tools.forEach((t) => {
+    shown.forEach((t) => {
       const li = document.createElement("li");
       li.className = t.found ? "ok" : "warn";
       const fileNow = state.meta && state.meta.saved_path;
-      const canOpenFile = (t.id === "wireshark" || t.id === "hex010") && !!fileNow;
+      const isCap = t.role === "open_capture" && !!fileNow;
       li.innerHTML = `<div class="row"><span class="mark">${t.found ? "✓" : "!"}</span>
         <div><b>${esc(t.name)}</b>
-        <span class="det">${esc(t.note)}${t.path ? " · " + esc(t.path) : ""}</span>
+        <span class="det">${esc(t.note || "")}</span>
         <div class="btns">
-          <button class="btn small" data-ext="${esc(t.id)}" data-act="open" ${t.found ? "" : "disabled"}>启动</button>
-          ${canOpenFile ? `<button class="btn small" data-ext="${esc(t.id)}" data-act="file" data-file="${esc(fileNow)}">打开当前抓包</button>` : ""}
+          <button class="btn small" data-ext="${esc(t.id)}" data-act="open" ${t.found ? "" : "disabled"}>${t.role === "decode" ? "打开(解码工具)" : "打开"}</button>
+          ${isCap ? `<button class="btn small" data-ext="${esc(t.id)}" data-act="file" data-file="${esc(fileNow)}">打开当前抓包</button>` : ""}
         </div></div></div>`;
       els.extList.appendChild(li);
     });
@@ -656,18 +683,17 @@ async function poll() {
       refreshMeta({ silent: true });
     }
     renderTop(snap);
+    appendNewPackets();   // 增量追加, 列表不再整表重建(修复闪烁/滚动)
     if (active() === "overview") {
-      drawNet(snap); drawSpark(snap); renderRecent(snap); renderMini(snap);
-      // 每 2s 刷新威胁表数据键
+      drawNet(snap); drawSpark(snap);
       const key = JSON.stringify((snap.detections || []).map((d) => d.ts + d.title).slice(0, 6));
       if (key !== thKey) { renderRecent(snap); thKey = key; }
-    } else {
-      incPackets();
-      if (active() === "threats") {
-        const k2 = JSON.stringify((snap.detections || []).map((d) => d.ts + d.title).slice(0, 10));
-        if (k2 !== thKey) { renderThreats(snap); thKey = k2; }
+      if (!(snap.packets || []).length && !els.miniPktBody.querySelector(".emptyrow")) {
+        addEmptyRow(els.miniPktBody, "等待真实流量…");
       }
-      if (active() === "packets") incPackets();
+    } else if (active() === "threats") {
+      const k2 = JSON.stringify((snap.detections || []).map((d) => d.ts + d.title).slice(0, 10));
+      if (k2 !== thKey) { renderThreats(snap); thKey = k2; }
     }
   } catch (e) { console.warn("poll", e); }
 }
