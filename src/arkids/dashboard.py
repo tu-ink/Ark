@@ -126,14 +126,19 @@ class LiveMonitor:
                                  "建议改用默认的内置抓包引擎(免安装)。"}
             self.ifaces = list_interfaces(self.tshark)
             if not interface:
-                # 自动: 逐个接口短时探测, 优先“当前有流量”的网卡(修复“抓不到包”)
-                probed = probe_interfaces_for_traffic(self.tshark, self.ifaces,
-                                                      per_sec=1.2)
-                self.ifaces = probed
+                # 自动: 只在“真实物理网卡”上短时探测(排除 loopback/virtual/蓝牙),
+                # 优先选中当前有流量的接口 —— 修复“抓不到包/误选静默接口”
+                phys = [i for i in self.ifaces
+                        if "loopback" not in i["name"].lower()
+                        and "loopback" not in i["description"].lower()
+                        and not any(k in i["description"].lower()
+                                    for k in ("vmware", "virtual", "蓝牙",
+                                              "bluetooth"))]
+                cand = phys or self.ifaces
+                probed = probe_interfaces_for_traffic(self.tshark, cand, per_sec=1.2)
                 busy = next((p for p in probed if p.get("probe_packets", 0) > 0), None)
-                interface = (busy or probed[0] if probed else None)
-                if isinstance(interface, dict):
-                    interface = interface["name"]
+                interface = (busy["name"] if busy else
+                             (probed[0]["name"] if probed else None))
             if not interface:
                 return {"ok": False,
                         "error": "未检测到可用网卡(tshark -D 为空, 可能缺 Npcap/管理员)。"}
@@ -287,11 +292,17 @@ class LiveMonitor:
             status = "error"
         else:
             status = "idle"
+        # 抓包运行一段时间仍 0 包 -> 提示可能接口无流量
+        uptime = (time.time() - self.started_at) if self.started_at else 0
+        no_pkt_hint = bool(capturing and status in ("live", "replay")
+                           and self.analyzer.counter["packets"] == 0
+                           and uptime > 6)
         return {
             "mode": self.mode,
             "engine": self._resolve_engine(),
             "engine_requested": self.engine,
             "status": status,
+            "hint_no_packets": no_pkt_hint,
             "version": ARKIDS_VERSION,
             "source": self.source_label,
             "last_error": self.last_error,

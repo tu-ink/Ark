@@ -81,7 +81,7 @@ const state = {
   view: "overview", meta: null, snap: null,
   ifaceVersion: "", lastPktSeq: 0, pktCache: [], pktShown: [],
   thDismiss: new Set(), chkDone: false, lastThKey: "",
-  netCtx: null, sparkCtx: null, prevStatus: "",
+  netCtx: null, sparkCtx: null, prevStatus: "", prevHint: false,
 };
 const active = () => state.view;
 
@@ -112,6 +112,13 @@ function applyMeta(m) {
   }
   els.btnWsOpen.disabled = !hasW;
   els.btnWsOpen.title = hasW ? "用 Wireshark 打开当前文件/接口" : "未检测到 Wireshark GUI";
+  // 抓包运行却长时间 0 包 -> 提醒一次(多为接口无流量)
+  const np = !!m.hint_no_packets;
+  if (np && !state.prevHint) {
+    toast("抓包运行中但约 6s 未收到包: 该接口可能无流量。请用 工具箱→抓包排错 确认," +
+      "或换与 Wireshark 一致的网卡 / 回放真实文件。", "warn");
+  }
+  state.prevHint = np;
   syncEngineUI();
 }
 function renderTop(snap) {

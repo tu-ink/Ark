@@ -129,6 +129,21 @@ class TestRawPcapngReader(unittest.TestCase):
                               RawPcapReader)
         self.assertIsNone(_reader_for(b"\x00\x01\x02\x03"))
 
+    def test_nanosecond_pcap_magic(self):
+        # Wireshark 4.x 默认写“纳秒精度”pcap(魔数 4d3cb2a1), 必须能解析
+        frames = [eth_frame(MAC_A, MAC_B, ipv4_udp("192.168.1.5", "8.8.8.8", 5353, 53))]
+        pcap = make_pcap(frames)
+        ns = bytearray(pcap)
+        ns[0:4] = b"\x4d\x3c\xb2\xa1"
+        recs = RawPcapReader().feed(bytes(ns))
+        self.assertEqual(len(recs), 1)
+        self.assertEqual((recs[0].src, recs[0].dport), ("192.168.1.5", "53"))
+        self.assertGreater(recs[0].ts, 1_600_000_000)
+        # 文件嗅探也应识别纳秒魔数
+        from arkids.capture import _reader_for
+        self.assertIsInstance(_reader_for(b"\x4d\x3c\xb2\xa1" + b"\x00" * 4),
+                              RawPcapReader)
+
 
 class TestFlowAnalyzer(unittest.TestCase):
     def _mk(self, src="192.168.1.5", dst="10.0.0.1", proto="tcp", sport="1",

@@ -196,6 +196,7 @@ class RawPcapReader:
         self._linktype = linktype
         self._header_done = False
         self.bytes_total = 0
+        self.ts_scale = 1e-6          # 微秒精度; 纳秒精度文件为 1e-9
 
     # 解析增量; 每次喂入新字节后返回尽量多的记录
     def feed(self, chunk: bytes) -> list[PacketRecord]:
@@ -205,19 +206,25 @@ class RawPcapReader:
             if len(self._buf) < 24:
                 return out
             magic = bytes(self._buf[:4])
-            if magic not in (b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4"):
-                raise ValueError("非 pcap 字节流(需要 tshark 输出经典 pcap)")
-            self._big = magic == b"\xa1\xb2\xc3\xd4"
-            endian = ">" if self._big else "<"
-            self._linktype = int.from_bytes(bytes(self._buf[20:24]),
-                                            "big" if self._big else "little")
+            # 经典 pcap 四种魔数: 大小端 × 微秒/纳秒精度
+            table = {
+                b"\xd4\xc3\xb2\xa1": ("little", 1e-6),   # 微秒(小端)
+                b"\x4d\x3c\xb2\xa1": ("little", 1e-9),   # 纳秒(小端, Wireshark≥4 默认)
+                b"\xa1\xb2\xc3\xd4": ("big", 1e-6),      # 微秒(大端)
+                b"\xa1\xb2\x3c\x4d": ("big", 1e-9),      # 纳秒(大端)
+            }
+            if magic not in table:
+                raise ValueError("非 pcap 字节流(无法识别文件魔数, 可能为 pcapng)")
+            self._bo, self.ts_scale = table[magic]
+            self._big = self._bo == "big"
+            self._linktype = int.from_bytes(bytes(self._buf[20:24]), self._bo)
             del self._buf[:24]
             self._header_done = True
         rec_fmt = struct.Struct((">" if self._big else "<") + "IIII")
         while True:
             if len(self._buf) < 16:
                 break
-            ts_s, ts_us, cap_len, _orig = rec_fmt.unpack_from(bytes(self._buf))
+            ts_s, ts_frac, cap_len, _orig = rec_fmt.unpack_from(bytes(self._buf))
             pad = (4 - cap_len % 4) % 4
             need = 16 + cap_len + pad
             if len(self._buf) < need:
@@ -225,7 +232,7 @@ class RawPcapReader:
             pkt = bytes(self._buf[16:16 + cap_len])
             del self._buf[:need]
             self.bytes_total += 16 + cap_len + pad
-            rec = self._decode_packet(ts_s + ts_us / 1e6, pkt)
+            rec = self._decode_packet(ts_s + ts_frac * self.ts_scale, pkt)
             if rec:
                 out.append(rec)
         return out
@@ -416,8 +423,9 @@ def decode_any_frame(ts: float, pkt: bytes, linktype: int) -> PacketRecord:
 
 
 def _reader_for(magic: bytes):
-    """按文件头选择内置解析器: 经典 pcap(d4c3b2a1/a1b2c3d4) 或 pcapng(0a0d0d0a)。"""
-    if magic.startswith(b"\xd4\xc3\xb2\xa1") or magic.startswith(b"\xa1\xb2\xc3\xd4"):
+    """按文件头选择内置解析器: 经典 pcap(微秒/纳秒×大小端) 或 pcapng(0a0d0d0a)。"""
+    if magic.startswith((b"\xd4\xc3\xb2\xa1", b"\x4d\x3c\xb2\xa1",
+                         b"\xa1\xb2\xc3\xd4", b"\xa1\xb2\x3c\x4d")):
         return RawPcapReader()
     if magic.startswith(b"\x0a\x0d\x0d\x0a"):
         return RawPcapngReader()
@@ -612,8 +620,17 @@ class CaptureSource(threading.Thread):
             raise RuntimeError(f"启动抓包进程失败: {exc}") from exc
         reader = RawPcapReader()
         stderr_tail = bytearray()
+        out_fd = self._proc.stdout.fileno()  # type: ignore[union-attr]
+        # 关键修复: 用 os.read 直读管道 —— 有数据即返回(哪怕 1 字节),
+        # 而不是等 stdout.read(n) 攒满 n 字节; 否则小流量时永远“抓不到”。
         while not self._stop_ev.is_set():
-            chunk = self._proc.stdout.read(1 << 16)  # type: ignore[union-attr]
+            try:
+                chunk = os.read(out_fd, 1 << 16)
+            except BlockingIOError:
+                time.sleep(0.01)
+                continue
+            except OSError:
+                break
             if not chunk:
                 break
             if self._save_fh:
