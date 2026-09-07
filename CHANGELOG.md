@@ -1,5 +1,16 @@
 # 版本历史
 
+## [0.10.0] - 2025
+
+### 原生桌面 GUI 取代 WebUI 为主界面
+- 新增 src/arkids/gui.py(tkinter): 工具台风格桌面端 —— 实时总览(KPI+运行日志)/
+  封包浏览(搜索/导出CSV)/威胁与处置(一键deny)/防火墙规则/工具箱(自检·深度抓包排错·
+  以管理员运行·Wireshark/010/CyberChef 联动)
+- 打包版双击默认进入 GUI(`python -m arkids gui`); Web 控制台保留为可选子命令
+- 抓包可用性: 非管理员时提示; 支持“以管理员运行(UAC)”; 深度排错区分
+  denied/no_device/no_traffic 并给修复步骤(依据 Wireshark CapturePrivileges 官方说明)
+- 测试 36 项通过; 版本 0.10.0
+
 ## [0.9.1] - 2025
 
 ### 修复“Wireshark 能抓、程序抓不到”的两处致命原因

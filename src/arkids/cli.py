@@ -132,6 +132,13 @@ def _cmd_serve(args: argparse.Namespace) -> None:
                      state_dir=args.state_dir).serve(args.host, args.port)
 
 
+def _cmd_gui(args: argparse.Namespace) -> None:
+    """启动原生桌面 GUI(推荐主界面; 打包版双击默认进入)。"""
+    ensure_dirs()
+    from .gui import main as gui_main
+    gui_main()
+
+
 def _cmd_dashboard(args: argparse.Namespace) -> None:
     """启动真实流量监控控制台(实时抓包/回放/封包浏览/威胁处置/AI 研判)。"""
     ensure_dirs()
@@ -225,7 +232,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--state-dir", default="run")
     sp.set_defaults(func=_cmd_serve)
 
-    sp = sub.add_parser("dashboard", help="启动真实流量监控控制台(Wireshark/内置嗅探/回放)")
+    sp = sub.add_parser("gui", help="启动原生桌面 GUI(推荐主界面)")
+    sp.set_defaults(func=_cmd_gui)
+
+    sp = sub.add_parser("dashboard", help="启动 Web 监控控制台(可选; 已由 GUI 替代为默认)")
     sp.add_argument("--engine", default="auto", choices=("auto", "sniffer", "tshark"),
                     help="抓包引擎: auto=有 Wireshark/tshark 则用之, 否则内置原始套接字;"
                          " sniffer=自研; tshark=传统")
@@ -256,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
     raw = list(argv) if argv is not None else sys.argv[1:]
     # 打包版(exe)双击运行: 无参数时默认进入可视化控制台并打开浏览器
     if not raw and getattr(sys, "frozen", False):
-        raw = ["dashboard"]
+        raw = ["gui"]
     args = build_parser().parse_args(raw)
     args.func(args)
     return 0

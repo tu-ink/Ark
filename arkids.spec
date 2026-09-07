@@ -22,11 +22,15 @@ a = Analysis(
         "sklearn.utils._typedefs",
         "sklearn.neighbors._partition_nodes",
         "scipy.special.cython_special",
+        # 原生 GUI(tkinter)与懒加载模块
+        "tkinter",
+        "arkids.gui",
+        "arkids.exttools",
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter", "IPython", "matplotlib", "PyQt5", "PySide6", "pytest"],
+    excludes=["IPython", "matplotlib", "PyQt5", "PySide6", "pytest"],
     noarchive=False,
 )
 

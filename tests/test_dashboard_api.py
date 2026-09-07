@@ -138,6 +138,14 @@ class TestDashboardApi(unittest.TestCase):
         self.assertIn("ok", d)
         self.assertGreaterEqual(len(d["items"]), 4)
 
+    def test_gui_module_import(self):
+        try:
+            import arkids.gui as g  # noqa: PLC0415
+        except ImportError as exc:
+            self.skipTest("tkinter 不可用: " + str(exc))
+        self.assertTrue(hasattr(g, "ArkGUI"))
+        self.assertTrue(hasattr(g, "try_run_as_admin"))
+
 
 if __name__ == "__main__":
     unittest.main()
