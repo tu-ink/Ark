@@ -15,22 +15,28 @@ ArkIDS（`arkids`）以标准评测集 **NSL-KDD** 的数据模式（41 维流�
 - **工程化**：版本单一来源、标准 pyproject 元数据、console 入口 `arkids`、
   wheel / PyInstaller exe 打包、应用图标与 favicon（详见 docs/packaging.md）。
 
-**当前版本：v0.11.0** · License: MIT · [CHANGELOG](CHANGELOG.md)
+**当前版本：v0.11.2** · License: MIT · [CHANGELOG](CHANGELOG.md)
 
 ## 快速开始
 
 ### A. 直接使用（免装 Python）—— 打包版
 
-发布产物在 `dist/`（或 GitHub Releases）：
-- `ArkIDS.exe`（单文件）：**双击即启动可视化控制台并自动打开浏览器**；
-- `ArkIDS-0.11.0-win64.zip`：目录版 + 说明/授权/图标。
+发布产物在 `dist/`（或 GitHub Releases），当前版本 **0.11.2**：
+- `ArkIDS-0.11.2-win64-portable.zip`（**唯一推荐形态**）：目录版，解压后双击
+  `ArkIDS\ArkIDS.exe` 即打开原生桌面 GUI（tkinter，无需浏览器）；
+- `arkids-0.11.2-py3-none-any.whl`：pip 安装包（`pip install arkids-0.11.2-py3-none-any.whl`）；
+- `VERSION.txt`：发布包版本标定（版本号/构建时间/Git 提交/内嵌抓包库）。
+
+> **不再提供单文件 exe**：单文件版运行时要把内置组件自解压到临时目录，在受限权限
+> 或杀软拦截环境下会“双击无反应/闪退”（实测 `Failed to extract MSVCP140.dll`）。
+> 目录版直接把依赖放在同目录，稳定可用；发布脚本会自动清理历史单文件产物。
 
 ### B. 源码 / 开发者模式（Python ≥ 3.9）
 
 ```bash
 # 1) 安装依赖或直接安装 wheel
 pip install -r requirements.txt
-# 或: pip install dist/arkids-0.11.0-py3-none-any.whl   (安装后可直接用 arkids 命令)
+# 或: pip install dist/arkids-0.11.2-py3-none-any.whl   (安装后可直接用 arkids 命令)
 
 # 2) 一键演示: 生成演示数据 + 训练 + 仿真闭环
 python -m arkids demo            # 需要 PYTHONPATH=src (或安装为包后直接运行)
@@ -39,8 +45,10 @@ python -m arkids demo            # 需要 PYTHONPATH=src (或安装为包后直�
 python -m arkids init-demo-data                          # 生成演示数据
 python -m arkids train --data data/demo_flows.csv        # 训练 RF 模型
 python -m arkids simulate --model models/arkids_rf.joblib # 检测+防御仿真
+python -m arkids gui                                     # 桌面 GUI(主界面)
+python -m arkids selftest                                # 运行/核心功能自检(9 项)
 python -m arkids serve --port 8735                       # REST 检测服务
-python -m arkids dashboard --port 8642                   # 可视化控制台(Web)
+python -m arkids dashboard --port 8642                   # 可视化控制台(Web, 可选)
 ```
 
 > 提示：从仓库根目录运行时先设置 `PYTHONPATH=src`（Windows PowerShell：
@@ -57,19 +65,24 @@ Ark/
 │   ├── models.py          #   模型训练/评估/持久化(RF/GB/MLP)
 │   ├── detector.py        #   流式检测引擎(置信度决策)
 │   ├── defense.py         #   智能防御引擎(证据累积/封禁/规则)
-│   ├── capture.py         #   真实流量采集: tshark/pcap 解析 + 启发式检测
+│   ├── capture.py         #   真实流量采集: tshark 引擎 + pcap/pcapng 解析 + 启发式检测
+│   ├── scapylib.py        #   Python 抓包库引擎(scapy + Npcap, 默认首选)
 │   ├── sniffer.py         #   自研抓包引擎: 原始套接字抓包 + pcap 落盘(免第三方工具)
 │   ├── firewall.py        #   防火墙规则库(在线编辑/脚本导出)
 │   ├── advisor.py         #   AI 智能建议(规则引擎 + 可选 LLM)
-│   ├── dashboard.py       #   可视化控制台服务(真实流量监控 + API)
+│   ├── exttools.py        #   工具箱: 外部工具探测/按需调用(Wireshark、010、CyberChef)
+│   ├── selftest.py        #   运行/核心功能自检(打包后可直接 selftest)
+│   ├── gui.py             #   原生桌面 GUI(tkinter, 主界面)
+│   ├── dashboard.py       #   可视化控制台服务(可选, Web)
 │   ├── webui/             #   前端静态资源(HTML/CSS/JS, 原生无框架)
 │   ├── simulate.py        #   离线攻击仿真(仅算法实验/评测用)
 │   ├── server.py          #   极简 REST 服务(stdlib)
 │   ├── cli.py             #   命令行入口
+│   ├── _vendor/           #   内嵌 scapy(不入库, 由 scripts/fetch_scapy.py 获取)
 │   └── version.py         #   版本号单一来源
 ├── assets/                # 应用图标(.ico/.png/favicon)与 exe 版本资源
-├── scripts/               # 图标生成/打包/发布脚本(make_icon|make_wheel|entry|build_release)
-├── tests/                 # 单元测试(unittest, 29 项全部通过)
+├── scripts/               # 图标/打包/发布门禁(release_check|_make_release_zips|fetch_scapy)
+├── tests/                 # 单元测试(unittest, 37 项全部通过)
 ├── docs/                  # 文献调研/设计/使用/实验/打包文档
 ├── data/                  # 数据(自动生成或下载, 已 gitignore)
 ├── models/                # 训练产物(已 gitignore)
@@ -82,9 +95,13 @@ Ark/
 └── LICENSE                # MIT
 ```
 
-## 真实流量监控控制台（Web，内嵌 Wireshark/tshark 引擎）
+## 真实流量监控（桌面 GUI 为主界面，Web 控制台为可选）
 
-> 数据真实性原则：**本控制台不生成、不播放任何仿真/构造流量**。它只消费两种真实来源：
+> 主界面是**原生桌面 GUI**（`arkids gui`，打包版双击 `ArkIDS.exe`）：实时总览（真实攻防
+> 拓扑与速率趋势）、封包浏览、威胁与处置、防火墙规则在线编辑、工具箱·排错，共 5 个页签。
+> 下面这段 Web 控制台为兼容保留（`arkids dashboard`），能力与 GUI 一致。
+
+> 数据真实性原则：**不生成、不播放任何仿真/构造流量**。只消费两种真实来源：
 > ① 本机网卡实时抓包；② 用户提供的真实抓包文件(.pcap/.pcapng)。未选择数据源时显示
 > “等待真实流量”，而不是演示假数据。
 
@@ -94,11 +111,16 @@ python -m arkids dashboard --pcap capture.pcap          # 直接回放真实抓�
 python -m arkids dashboard --interface "以太网"          # 直接对指定网卡抓包
 ```
 
-- **抓包引擎(默认自研, 免第三方工具)**：不再依赖 Wireshark/Npcap —— 内置
-  `SnifferCapture` 用 Windows 原始套接字(SIO_RCVALL)/Linux AF_PACKET 直接采集
-  本机真实流量(需管理员/root), 原始报文同步落盘 .pcap(链路 101=RAW/1=Ethernet)。
-  可选保留“传统 tshark”引擎(界面下拉切换, 未安装也可完全使用)。落盘文件仍可一键
-  “用 Wireshark 打开”人工复核(检测到 GUI 时启用)。文件回放支持真实 .pcap/.pcapng。
+- **抓包引擎（默认 Python 抓包库）**：`--engine auto` 按 **scapy → tshark → 自研原始套接字**
+  顺序自动择优：
+  1. **scapy**（内嵌 2.7.0，经 Npcap 的 `wpcap.dll`）——默认首选，跨网卡/跨链路类型最稳；
+  2. **tshark**（装了 Wireshark 时可用，兼容 4.x 的纳秒精度 pcap）；
+  3. **自研 `SnifferCapture`**（Windows `SIO_RCVALL` / Linux `AF_PACKET`，免第三方工具兜底）。
+  Windows 实时抓包需要 Npcap（随 Wireshark 安装）；若安装时勾选“限制为管理员”，
+  需右键以管理员身份运行（GUI 工具箱提供“以管理员运行 (UAC)”按钮）。
+  抓不到包时用**工具箱 → 深度抓包排错**，会明确区分 `denied`(权限) / `no_device`(驱动) /
+  `no_traffic`(接口无流量) / `ok`，而不是笼统报错。原始报文可同步落盘 .pcap 并用本机
+  Wireshark/010 复核（工具箱按需调用，见 `docs/third_party_tools.md`）。
 - **🌐 实时网络拓扑**：从真实数据包聚合的“内网主机(私网) ↔ 外网主机(公网)”连线图，
   线宽按真实包量、红色连线表示命中威胁的主机，附包速率/告警速率趋势；
 - **封包浏览**：实时数据包表(时间/源/目标/协议/端口/TCP标志/长度)，支持搜索与 CSV 导出；
@@ -111,6 +133,28 @@ python -m arkids dashboard --interface "以太网"          # 直接对指定网
 > 抓包软件**；非管理员时仍可用“回放抓包文件”模式加载真实 .pcap/.pcapng(内置解析器)。
 > 离线算法实验(NSL-KDD/合成演示 + 训练/评估)属于另一条研究链路，请使用
 > `arkids train|simulate` 命令，与本监控模式分离。
+
+## 工程化与发布（版本标定 / 发布门禁）
+
+- **版本号单一来源**：`src/arkids/version.py`（`__version__`），`pyproject.toml` 动态读取，
+  exe 版本资源（`assets/version_info.txt`）由发布脚本自动生成，避免多份版本号漂移；
+- **发布门禁（一条命令跑完）**：
+
+  ```bash
+  python scripts/release_check.py     # 版本资源 → 单元测试 → 打包 → exe 自检 → GUI 冒烟 → 便携包
+  ```
+
+  门禁按顺序执行 6 步，任一步失败即中止：① 生成版本资源；② `tests/` 单元测试（37 项）；
+  ③ PyInstaller 目录版打包；④ **打包产物核心功能自检**（`ArkIDS.exe selftest`，9 项：
+  版本/环境、scapy 抓包库、pcap 解析、pcapng 解析、防火墙、启发式检测、抓包权限排错、
+  REST 接口、GUI 构建）；⑤ GUI 启动冒烟（`ArkIDS.exe gui` 自动开关）；⑥ 生成
+  `dist/ArkIDS-<版本>-win64-portable.zip` + wheel + `VERSION.txt`，并清理历史版本产物。
+  日志落在 `dist/release_logs/`。
+- **内嵌库不入库**：`src/arkids/_vendor/scapy/`（GPL-2.0，约 9 MB）不提交到 Git，
+  克隆后执行 `python scripts/fetch_scapy.py` 从 PyPI 拉取（发布门禁会在缺失时自动获取）；
+- **仅发布目录版**：`ArkIDS-<版本>-win64-portable.zip`；
+- **推送说明**：本机到 `github.com:443` 不稳定时，可用 `run/_push_all.py`（GitHub Git Data
+  API 通道，令牌取自 Windows 凭据管理器）完成推送，效果与 `git push` 一致。
 
 ## 核心结果（合成演示数据集，4000 条，70/30 划分）
 
@@ -161,8 +205,8 @@ curl -s -X POST localhost:8735/defense/block -H "Content-Type: application/json"
    达到阈值后联动封禁并导出防火墙规则（nftables/iptables），降低误杀；
 3. **AI 智能建议**：内置可解释规则引擎持续输出处置建议（离线可用），可选接入
    大模型生成综合研判，辅助运维决策；
-4. **可落地接口**：REST 检测服务、Web 可视化控制台（实时攻防网络/防火墙在线编辑/
-   攻击日志/AI 建议面板）、封禁清单 JSON、规则脚本输出，便于对接 SIEM/防火墙。
+4. **可落地接口**：原生桌面 GUI（实时攻防网络/封包浏览/威胁处置/防火墙在线编辑/AI 建议）
+   与可选 Web 控制台、REST 检测服务、封禁清单 JSON、规则脚本输出，便于对接 SIEM/防火墙。
 
 ## 项目背景与致谢
 

@@ -1,5 +1,16 @@
 # 版本历史
 
+## [0.11.2] - 2025
+
+### 仓库轻量化 + 发布包版本标定修正 + 工程化文档
+- 内嵌 scapy(src/arkids/_vendor, GPL-2.0, ~9MB)不再入库: 新增 `scripts/fetch_scapy.py`
+  从 PyPI 获取, `scripts/release_check.py` 在缺失时自动补齐(克隆后依然一键可发布)
+- 便携包命名改为读取版本单一来源(此前硬编码导致 zip 名与 VERSION.txt 版本不一致),
+  发布脚本新增: 自动清理其它版本号的 whl/zip 与打包临时目录, dist 只保留当前版本
+- README 重写发布与工程化章节: 版本单一来源 / 6 步发布门禁 / 仅发目录版 / 抓包引擎
+  优先级(scapy→tshark→自研) / GUI 为主界面; 记录 API 推送通道(run/_push_all.py)
+- 版本标定: `arkids selftest` 9/9 通过, GUI 冒烟通过, 便携包 ArkIDS-0.11.2-win64-portable.zip
+
 ## [0.11.1] - 2025
 
 ### 修复“软件无法打开” + 打包后版本标定 + 运行/核心功能测试门禁
