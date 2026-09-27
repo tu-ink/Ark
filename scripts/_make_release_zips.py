@@ -4,11 +4,14 @@
 “双击打不开”; 目录版(解压即用)稳定可靠。
 """
 import shutil
+import sys
 import zipfile
 from pathlib import Path
 
 DIST = Path("dist")
-VER = "0.11.1"
+_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_ROOT / "src"))
+from arkids.version import __version__ as VER  # noqa: E402  版本号单一来源
 NOTE = """ArkIDS v%(v)s — 基于人工智能的网络攻击智能检测与防御系统
 =========================================================
 【如何使用】
@@ -56,9 +59,18 @@ def main() -> int:
         if stale.exists():
             stale.unlink()
             print("[clean] 已移除单文件 exe(易自解压失败):", stale.name)
-    for old in DIST.glob("ArkIDS-*-win64-single.zip"):
-        old.unlink()
-        print("[clean] 已移除单文件 zip:", old.name)
+    # 清理其它版本号的旧发布物 + 打包临时目录, 保证 dist 只留当前版本
+    for pattern in ("ArkIDS-*-win64-single.zip", "ArkIDS-*-win64.zip",
+                    "ArkIDS-*-win64-portable.zip", "arkids-*-py3-none-any.whl"):
+        for old in sorted(DIST.glob(pattern)):
+            if VER in old.name or old.resolve() == zip_path.resolve():
+                continue
+            old.unlink()
+            print("[clean] 已移除历史版本产物:", old.name)
+    for junk in DIST.glob(".tmp-*"):
+        if junk.is_dir():
+            shutil.rmtree(junk, ignore_errors=True)
+            print("[clean] 已移除打包临时目录:", junk.name)
     return 0
 
 
