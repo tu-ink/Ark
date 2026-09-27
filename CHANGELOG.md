@@ -1,5 +1,20 @@
 # 版本历史
 
+## [0.11.1] - 2025
+
+### 修复“软件无法打开” + 打包后版本标定 + 运行/核心功能测试门禁
+- 根因: 单文件 exe 自解压到临时目录失败(MSVCP140.dll 提取被拒)→ 双击无反应;
+  **改为只发布目录版便携包**(ArkIDS-<版本>-win64-portable.zip), 并在发布脚本中
+  自动删除历史单文件 exe/single-zip, 避免误用
+- 新增 `arkids selftest`: 打包产物内置核心功能测试(9 项) —— 版本与运行环境 /
+  Python 抓包库 scapy / pcap 解析 / pcapng 解析 / 防火墙规则库 / 流统计与启发式
+  检测 / 抓包环境排错(快速) / REST 服务与接口 / GUI 构建
+- 新增 `scripts/release_check.py` 发布门禁: 自动生成 Windows 版本资源(版本号标定)
+  → 单元测试 → 构建 wheel+目录版 exe → **exe selftest** → **GUI 启动冒烟**
+  (ARKIDS_GUI_AUTOCLOSE) → 写 dist/VERSION.txt → 生成便携 zip; 任一步失败即终止
+- GUI 支持 ARKIDS_GUI_AUTOCLOSE=毫秒 自动关闭(供自动化冒烟)
+- 实测门禁全绿: 单测 37/37; 产物自检 9/9; GUI 冒烟通过; 版本 0.11.1
+
 ## [0.11.0] - 2025
 
 ### 采用 Python 流量库(scapy)实现抓包(默认引擎)

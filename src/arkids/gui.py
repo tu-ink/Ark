@@ -533,6 +533,10 @@ class ArkGUI:
         self._refresh_ifaces()
         self._render_firewall()
         self.root.after(300, self._poll)
+        # 自动关闭(供打包后 GUI 冒烟测试使用): ARKIDS_GUI_AUTOCLOSE=毫秒
+        auto = os.environ.get("ARKIDS_GUI_AUTOCLOSE", "")
+        if auto.isdigit():
+            self.root.after(int(auto), self._on_close)
         self.root.mainloop()
 
 

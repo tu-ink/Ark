@@ -132,6 +132,13 @@ def _cmd_serve(args: argparse.Namespace) -> None:
                      state_dir=args.state_dir).serve(args.host, args.port)
 
 
+def _cmd_selftest(args: argparse.Namespace) -> None:
+    """打包产物内置自检(核心功能测试)。"""
+    ensure_dirs()
+    from .selftest import run as selftest_run
+    raise SystemExit(selftest_run())
+
+
 def _cmd_gui(args: argparse.Namespace) -> None:
     """启动原生桌面 GUI(推荐主界面; 打包版双击默认进入)。"""
     ensure_dirs()
@@ -234,6 +241,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("gui", help="启动原生桌面 GUI(推荐主界面)")
     sp.set_defaults(func=_cmd_gui)
+
+    sp = sub.add_parser("selftest", help="内置自检(核心功能测试, 供打包后验证)")
+    sp.set_defaults(func=_cmd_selftest)
 
     sp = sub.add_parser("dashboard", help="启动 Web 监控控制台(可选; 已由 GUI 替代为默认)")
     sp.add_argument("--engine", default="auto",
