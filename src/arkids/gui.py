@@ -127,7 +127,7 @@ class ArkGUI:
         ttk.Label(top, text="ArkIDS 工具台(GUI)", style="Title.TLabel").pack(side="left")
         self.lbl_status = ttk.Label(top, text="空闲", style="Dim.TLabel")
         self.lbl_status.pack(side="left", padx=(18, 0))
-        self.lbl_engine = ttk.Label(top, text="引擎: 自动(优先 Wireshark)",
+        self.lbl_engine = ttk.Label(top, text="引擎: 自动(scapy → tshark → 自研)",
                                     style="Dim.TLabel")
         self.lbl_engine.pack(side="left", padx=12)
         self.lbl_priv = ttk.Label(top, text="", style="Warn.TLabel")
@@ -282,7 +282,7 @@ class ArkGUI:
     def _tab_tools(self, nb: ttk.Notebook) -> None:
         f = ttk.Frame(nb, padding=8); nb.add(f, text="工具箱·排错")
         row = ttk.Frame(f); row.pack(fill="x")
-        ttk.Button(row, text="环境自检(8项)", command=self._selfcheck).pack(side="left")
+        ttk.Button(row, text="环境自检(9项)", command=self._selfcheck).pack(side="left")
         ttk.Button(row, text="深度抓包排错(约6-10s)", command=self._diag).pack(
             side="left", padx=8)
         ttk.Button(row, text="以管理员运行本程序(UAC)", command=self._elevate).pack(

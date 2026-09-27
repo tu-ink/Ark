@@ -44,11 +44,12 @@
       </div>
       <div class="srcpane" id="paneLive">
         <select id="engineSel" title="抓包引擎">
-          <option value="auto">引擎: 自动(优先 Wireshark)</option>
+          <option value="auto">引擎: 自动(优先 scapy)</option>
+          <option value="scapy">Python 抓包库 scapy</option>
           <option value="tshark">传统 tshark(Wireshark)</option>
           <option value="sniffer">内置嗅探(原始套接字)</option>
         </select>
-        <span class="hint" id="engineNote">自动: 检测到 Wireshark/tshark 则用之; 否则自研内置引擎。</span>
+        <span class="hint" id="engineNote">自动: 优先 Python 抓包库 scapy(经 Npcap), 其次 tshark, 最后自研内置引擎。</span>
         <select id="iface" title="tshark 模式选择网卡" class="hidden"><option>请选网卡</option></select>
         <button class="btn" id="btnRefreshIface" title="tshark 模式刷新网卡">刷新</button>
         <input id="capFilter" placeholder="过滤器(tshark 模式生效), 如: tcp port 443" spellcheck="false">

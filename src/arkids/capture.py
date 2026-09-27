@@ -197,6 +197,30 @@ class RawPcapReader:
         self._header_done = False
         self.bytes_total = 0
         self.ts_scale = 1e-6          # 微秒精度; 纳秒精度文件为 1e-9
+        self.truncated = False        # 文件/流尾部记录损坏(被截断)
+        self.padded = None            # 记录是否 4 字节对齐补齐(None=未判定)
+        self.dropped_bytes = 0        # 因损坏丢弃的尾部字节数
+
+    # 单条记录最大长度(超过即判定为损坏的记录头; Wireshark 默认 snaplen=262144)
+    MAX_CAPLEN = 262144
+
+    @staticmethod
+    def _plausible(ts_s: int, ts_frac: int, cap: int, orig: int) -> bool:
+        """记录头合理性判定 —— 用于识别“被截断/损坏的尾部”。"""
+        if cap <= 0 or cap > RawPcapReader.MAX_CAPLEN:
+            return False
+        if orig < cap or orig > RawPcapReader.MAX_CAPLEN:
+            return False
+        if ts_s > 4_102_444_800 or ts_frac >= 1_000_000_000:   # 2100-01-01
+            return False
+        return True
+
+    def _header_ok(self, off: int) -> bool:
+        """缓冲区 off 处是否是一条合理的记录头。"""
+        if len(self._buf) < off + 16:
+            return False
+        ts_s, ts_frac, cap, orig = self._rec_fmt.unpack_from(bytes(self._buf), off)
+        return self._plausible(ts_s, ts_frac, cap, orig)
 
     # 解析增量; 每次喂入新字节后返回尽量多的记录
     def feed(self, chunk: bytes) -> list[PacketRecord]:
@@ -220,21 +244,63 @@ class RawPcapReader:
             self._linktype = int.from_bytes(bytes(self._buf[20:24]), self._bo)
             del self._buf[:24]
             self._header_done = True
-        rec_fmt = struct.Struct((">" if self._big else "<") + "IIII")
+        self._rec_fmt = struct.Struct((">" if self._big else "<") + "IIII")
         while True:
             if len(self._buf) < 16:
                 break
-            ts_s, ts_frac, cap_len, _orig = rec_fmt.unpack_from(bytes(self._buf))
-            pad = (4 - cap_len % 4) % 4
-            need = 16 + cap_len + pad
-            if len(self._buf) < need:
+            ts_s, ts_frac, cap_len, orig_len = self._rec_fmt.unpack_from(bytes(self._buf))
+            if not self._plausible(ts_s, ts_frac, cap_len, orig_len):
+                # 记录头不可信 —— 文件被截断或写入中断, 丢弃尾部而非解析出垃圾包
+                self.truncated = True
+                self.dropped_bytes = len(self._buf)
+                del self._buf[:]
                 break
+            body = 16 + cap_len
+            if len(self._buf) < body:
+                break                                  # 记录数据未到齐
+            pad = (4 - cap_len % 4) % 4
+            if pad == 0:
+                step = body
+            else:
+                big = body + pad
+                if self._header_ok(body):              # 下一条紧邻数据 => 未补齐
+                    step = body
+                    self.padded = False
+                elif self._header_ok(big):             # 下一条在补齐后 => 4 字节对齐
+                    step = big
+                    self.padded = True
+                elif len(self._buf) >= big + 16:
+                    # 两条候选都不像记录头(末段损坏或最后一条记录): 沿用已判定风格
+                    step = body if self.padded is False else big
+                elif len(self._buf) >= big:
+                    # 数据够但要等更多字节才能判定: 先按已知风格处理
+                    step = body if self.padded is False else big
+                else:
+                    break                              # 需更多字节才能判定
             pkt = bytes(self._buf[16:16 + cap_len])
-            del self._buf[:need]
-            self.bytes_total += 16 + cap_len + pad
+            del self._buf[:step]
+            self.bytes_total += step
             rec = self._decode_packet(ts_s + ts_frac * self.ts_scale, pkt)
             if rec:
                 out.append(rec)
+        return out
+
+    def flush_tail(self) -> list[PacketRecord]:
+        """处理文件末尾最后一条记录(其后无字节可用于补齐判定); 其余残余视为截断。"""
+        out: list[PacketRecord] = []
+        if len(self._buf) >= 16:
+            ts_s, ts_frac, cap_len, orig_len = self._rec_fmt.unpack_from(bytes(self._buf))
+            if self._plausible(ts_s, ts_frac, cap_len, orig_len) \
+                    and len(self._buf) >= 16 + cap_len:
+                pkt = bytes(self._buf[16:16 + cap_len])
+                rec = self._decode_packet(ts_s + ts_frac * self.ts_scale, pkt)
+                del self._buf[:16 + cap_len]
+                if rec:
+                    out.append(rec)
+        if self._buf:
+            self.truncated = True
+            self.dropped_bytes = len(self._buf)
+            del self._buf[:]
         return out
 
     def feed_file(self, path: str | Path, limit: int = 0,
@@ -253,6 +319,13 @@ class RawPcapReader:
                     out.append(rec)
                     if limit and len(out) >= limit:
                         return out
+        for rec in self.flush_tail():          # 文件末尾最后一条记录
+            if skip:
+                skip -= 1
+                continue
+            out.append(rec)
+            if limit and len(out) >= limit:
+                break
         return out
 
     def _decode_packet(self, ts: float, pkt: bytes) -> PacketRecord | None:

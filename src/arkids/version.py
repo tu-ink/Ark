@@ -6,7 +6,7 @@
     - PyInstaller 版本资源(assets/version_info.txt, 由 scripts/release_check.py 自动生成)
 """
 
-__version__ = "0.11.2"
-VERSION_INFO = (0, 11, 2)
+__version__ = "0.11.4"
+VERSION_INFO = (0, 11, 4)
 
 __all__ = ["__version__", "VERSION_INFO"]

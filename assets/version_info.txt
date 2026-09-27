@@ -1,8 +1,8 @@
 # UTF-8 (由 release_check.py 自动生成)
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(0, 11, 2, 0),
-    prodvers=(0, 11, 2, 0),
+    filevers=(0, 11, 4, 0),
+    prodvers=(0, 11, 4, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -15,12 +15,12 @@ VSVersionInfo(
       StringTable('040904B0', [
         StringStruct('CompanyName', 'tu-ink'),
         StringStruct('FileDescription', 'ArkIDS - AI Network Attack Detection & Defense'),
-        StringStruct('FileVersion', '0.11.2'),
+        StringStruct('FileVersion', '0.11.4'),
         StringStruct('InternalName', 'ArkIDS'),
         StringStruct('LegalCopyright', 'Copyright (c) 2025 tu-ink (MIT)'),
         StringStruct('OriginalFilename', 'ArkIDS.exe'),
         StringStruct('ProductName', 'ArkIDS 基于人工智能的网络攻击智能检测与防御系统'),
-        StringStruct('ProductVersion', '0.11.2')
+        StringStruct('ProductVersion', '0.11.4')
       ])
     ]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])

@@ -138,6 +138,56 @@ class TestRawPcapngReader(unittest.TestCase):
         recs = RawPcapReader().feed(bytes(ns))
         self.assertEqual(len(recs), 1)
         self.assertEqual((recs[0].src, recs[0].dport), ("192.168.1.5", "53"))
+
+    def test_unpadded_records_are_parsed(self):
+        """scapy 写出的 pcap 记录不做 4 字节补齐, 解析器必须照样逐条读出。
+
+        回归背景: 早期解析器硬性按 4 字节补齐推进偏移, 遇到 scapy 落盘的真实抓包
+        文件(未补齐)会从第 2 条起全部错位, 2862 条真实包只解析出 1 条。
+        """
+        frames = [eth_frame(MAC_A, MAC_B, ipv4_tcp("192.168.1.5", "8.8.8.8",
+                                                  50000 + i, 443, 0x02))
+                  for i in range(5)]
+        raw = bytearray(struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1))
+        for i, fr in enumerate(frames):
+            raw += struct.pack("<IIII", 1_700_000_000 + i, i, len(fr), len(fr))
+            raw += fr                       # 故意不补齐
+        reader = RawPcapReader()
+        recs = reader.feed(bytes(raw))
+        # 除最后一条外都能判定并解析; 末条需 flush_tail(其后无字节可供判定)
+        self.assertEqual(len(recs), 4)
+        recs += reader.flush_tail()
+        self.assertEqual(len(recs), 5)
+        # 逐块喂入(模拟文件分块读取)时应当全部解析出来
+        reader2 = RawPcapReader()
+        got: list = []
+        for i in range(0, len(raw), 4096):
+            got += reader2.feed(bytes(raw[i:i + 4096]))
+        got += reader2.flush_tail()
+        self.assertEqual(len(got), 5)
+        self.assertEqual([r.dport for r in got], ["443"] * 5)
+        self.assertEqual(got[0].src, "192.168.1.5")
+        self.assertFalse(reader2.truncated)
+
+    def test_padded_records_still_parsed(self):
+        """Wireshark 风格(4 字节补齐)不能被新逻辑回归破坏。"""
+        frames = [eth_frame(MAC_A, MAC_B, ipv4_udp("10.0.0.1", "10.0.0.2", 1000 + i, 53))
+                  for i in range(4)]
+        data = make_pcap(frames)            # make_pcap 会补齐
+        reader = RawPcapReader()
+        recs = reader.feed(data) + reader.flush_tail()
+        self.assertEqual(len(recs), 4)
+        self.assertEqual(recs[2].dport, "53")
+
+    def test_truncated_tail_is_dropped(self):
+        """写入中断产生的垃圾尾部: 只丢尾部, 不能解析出长度荒谬的假包。"""
+        frames = [eth_frame(MAC_A, MAC_B, ipv4_tcp("192.168.1.5", "1.1.1.1", 5000, 80, 0x12))]
+        data = bytearray(make_pcap(frames))
+        data += b"\xff" * 64                # 模拟损坏尾部
+        reader = RawPcapReader()
+        recs = reader.feed(bytes(data))
+        self.assertEqual(len(recs), 1)
+        self.assertGreater(reader.dropped_bytes, 0)
         self.assertGreater(recs[0].ts, 1_600_000_000)
         # 文件嗅探也应识别纳秒魔数
         from arkids.capture import _reader_for

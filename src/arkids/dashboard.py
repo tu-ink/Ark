@@ -69,8 +69,9 @@ class LiveMonitor:
     def __init__(self, state_dir: str = "run", engine: str = "auto") -> None:
         self.tshark = find_tshark()
         self.wireshark = find_wireshark()
-        self.engine = engine if engine in ("auto", "sniffer", "tshark") else "auto"
-        # auto: 有 tshark(Wireshark) 优先用其抓包, 否则退回自研嗅探引擎
+        self.engine = engine if engine in ("auto", "scapy", "sniffer",
+                                          "tshark") else "auto"
+        # auto: 优先 Python 抓包库 scapy, 其次 tshark(Wireshark), 最后自研嗅探引擎
         from .sniffer import sniff_interfaces
         self.ifaces = list_interfaces(self.tshark) if self.engine == "tshark" \
             else sniff_interfaces()
@@ -906,7 +907,7 @@ class _Handler(BaseHTTPRequestHandler):
 class DashboardService:
     """启动参数仅为 UI 层引导; 真正数据由 LiveMonitor 从真实来源采集。"""
 
-    def __init__(self, state_dir: str = "run", engine: str = "sniffer") -> None:
+    def __init__(self, state_dir: str = "run", engine: str = "auto") -> None:
         self.monitor = LiveMonitor(state_dir=state_dir, engine=engine)
 
     def serve(self, host: str = "127.0.0.1", port: int = 8642,
@@ -916,8 +917,8 @@ class DashboardService:
         url = f"http://{host}:{port}"
         print(f"ArkIDS 真实流量监控控制台: {url}  (Ctrl+C 退出)")
         t = self.monitor.tshark
-        print("抓包引擎:", (str(t) + " " + tshark_version(t)) if t
-              else "未检测到 tshark —— 实时抓包需安装 Wireshark/Npcap, 或回放真实 pcap")
+        print("抓包引擎(auto):", self.monitor._resolve_engine(),
+              "| tshark:", (str(t) + " " + tshark_version(t)) if t else "未安装(可选)")
         if open_browser:
             import webbrowser as _wb
             threading.Timer(1.2, lambda: _wb.open(url)).start()

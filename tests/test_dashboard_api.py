@@ -147,6 +147,15 @@ class TestDashboardApi(unittest.TestCase):
         self.assertTrue(hasattr(g, "ArkGUI"))
         self.assertTrue(hasattr(g, "try_run_as_admin"))
 
+    def test_engine_choice_is_honoured(self):
+        """引擎下拉必须被真正采纳(回归: "scapy" 曾被白名单丢弃并静默回落 auto)。"""
+        for eng in ("auto", "scapy", "tshark", "sniffer"):
+            m = LiveMonitor(state_dir=self.td, engine=eng)
+            self.assertEqual(m.engine, eng)
+            self.assertIn(m._resolve_engine(), ("scapy", "tshark", "sniffer"))
+        # 未知引擎名回落 auto, 不抛异常
+        self.assertEqual(LiveMonitor(state_dir=self.td, engine="bogus").engine, "auto")
+
 
 if __name__ == "__main__":
     unittest.main()
