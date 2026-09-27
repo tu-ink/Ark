@@ -153,8 +153,9 @@ python -m arkids dashboard --interface "以太网"          # 直接对指定网
 - **内嵌库不入库**：`src/arkids/_vendor/scapy/`（GPL-2.0，约 9 MB）不提交到 Git，
   克隆后执行 `python scripts/fetch_scapy.py` 从 PyPI 拉取（发布门禁会在缺失时自动获取）；
 - **仅发布目录版**：`ArkIDS-<版本>-win64-portable.zip`；
-- **推送说明**：本机到 `github.com:443` 不稳定时，可用 `run/_push_all.py`（GitHub Git Data
-  API 通道，令牌取自 Windows 凭据管理器）完成推送，效果与 `git push` 一致。
+- **推送说明**：常规 `git push` 即可；本机若因 TLS/凭据环境问题无法直连，可用
+  `run/_gitcmd.py`（注入凭据与 CA 配置后执行任意 git 命令）或 `run/_push_all.py`
+  （GitHub Git Data API 通道，令牌取自 Windows 凭据管理器），效果与 `git push` 一致。
 
 ## 核心结果（合成演示数据集，4000 条，70/30 划分）
 
