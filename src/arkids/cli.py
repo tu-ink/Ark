@@ -236,9 +236,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=_cmd_gui)
 
     sp = sub.add_parser("dashboard", help="启动 Web 监控控制台(可选; 已由 GUI 替代为默认)")
-    sp.add_argument("--engine", default="auto", choices=("auto", "sniffer", "tshark"),
-                    help="抓包引擎: auto=有 Wireshark/tshark 则用之, 否则内置原始套接字;"
-                         " sniffer=自研; tshark=传统")
+    sp.add_argument("--engine", default="auto",
+                    choices=("auto", "scapy", "sniffer", "tshark"),
+                    help="抓包引擎: auto=优先 Python 抓包库 scapy, 其次 tshark, 最后内置嗅探")
     sp.add_argument("--interface", default=None,
                     help="网卡(tshark 传统模式使用; 内置引擎忽略, 捕获全部 IPv4)")
     sp.add_argument("--pcap", default=None, help="回放真实抓包文件(.pcap/.pcapng)")

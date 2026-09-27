@@ -15,6 +15,7 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(ROOT / "src" / "arkids" / "webui"), "arkids/webui"),   # 前端页面
+        (str(ROOT / "src" / "arkids" / "_vendor"), "arkids/_vendor"),  # 内嵌 scapy 源码
         (str(ROOT / "models" / "arkids_rf.joblib"), "models"),      # 默认演示模型
     ],
     hiddenimports=[
@@ -26,6 +27,7 @@ a = Analysis(
         "tkinter",
         "arkids.gui",
         "arkids.exttools",
+        "arkids.scapylib",
     ],
     hookspath=[],
     hooksconfig={},

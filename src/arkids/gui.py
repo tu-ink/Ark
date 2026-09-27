@@ -135,8 +135,9 @@ class ArkGUI:
 
         ctrl = ttk.Frame(self.root, padding=(10, 0))
         ctrl.pack(fill="x")
-        self.cmb_engine = ttk.Combobox(ctrl, width=16, state="readonly",
-                                       values=["auto", "tshark", "sniffer"])
+        self.cmb_engine = ttk.Combobox(ctrl, width=22, state="readonly",
+                                       values=["auto(优先scapy)", "scapy", "tshark",
+                                               "sniffer"])
         self.cmb_engine.current(0)
         self.cmb_engine.grid(row=0, column=0, padx=(0, 6))
         self.cmb_iface = ttk.Combobox(ctrl, width=34, state="readonly")
@@ -311,18 +312,18 @@ class ArkGUI:
             self.cmb_iface.current(0)
 
     def _start(self) -> None:
-        engine = self.cmb_engine.get()
+        raw = self.cmb_engine.get()
+        engine = "auto" if raw.startswith("auto") else raw
         idx = self.cmb_iface.current()
         iface = self.monitor.ifaces[idx]["name"] if idx >= 0 and \
             idx < len(self.monitor.ifaces) else None
-        if engine != "sniffer":
-            engine = "tshark" if self.monitor.tshark else "sniffer"
+        if engine == "tshark" and not self.monitor.tshark:
+            self._log("未检测到 tshark, 改用内置/ scapy 引擎")
+            engine = "auto"
         res = self.monitor.start_live(interface=iface, engine=engine)
-        self._log("开始抓包: " + (res.get("error") or res.get("mode", "ok")))
-        if not res.get("ok"):
-            if "权限" in (res.get("error") or ""):
-                self._elevate()
-        self._refresh_ifaces() if not iface else None
+        self._log("开始抓包(" + engine + "): " + (res.get("error") or res.get("mode", "ok")))
+        if not res.get("ok") and "权限" in (res.get("error") or ""):
+            self._elevate()
         self._sync_state()
 
     def _stop(self) -> None:

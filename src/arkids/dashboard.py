@@ -23,6 +23,7 @@ from .capture import (CaptureSource, PacketRecord, find_tshark, find_wireshark,
                       probe_interfaces_for_traffic, tshark_version)
 from .config import PROJECT_ROOT
 from .exttools import ExtTools
+from . import scapylib
 from .firewall import FirewallRule, FirewallStore
 from .version import __version__ as ARKIDS_VERSION
 
@@ -105,7 +106,15 @@ class LiveMonitor:
     def _resolve_engine(self) -> str:
         if self.engine != "auto":
             return self.engine
+        # 默认优先 Python 抓包库(scapy + Npcap), 其次 tshark, 最后自研嗅探
+        if self._scapy_ok():
+            return "scapy"
         return "tshark" if self.tshark else "sniffer"
+
+    def _scapy_ok(self) -> bool:
+        if getattr(self, "_scapy_cache", None) is None:
+            self._scapy_cache = scapylib.available()
+        return bool(self._scapy_cache)
 
     def start_live(self, interface: str | None = None,
                    engine: str | None = None) -> dict:
@@ -118,7 +127,46 @@ class LiveMonitor:
         self._reset_analysis()
         self.mode = "live"
         self.engine = engine
-        if engine == "tshark":
+        if engine == "scapy":
+            # 首选: Python 抓包库 scapy(经 Npcap/wpcap.dll 抓包)
+            if not self._scapy_ok():
+                return {"ok": False,
+                        "error": "scapy 不可用(需 Npcap; 已内嵌 scapy 源码)。"}
+            sc_ifaces = scapylib.list_interfaces()
+            if not interface:
+                # 优先借用 tshark 探测“当前有流量”的网卡(与 scapy 使用同一 NPF 名),
+                # 否则按描述挑真实物理网卡(排除虚拟/WAN/蓝牙)
+                if self.tshark:
+                    ts_ifaces = list_interfaces(self.tshark)
+                    probed = probe_interfaces_for_traffic(self.tshark, ts_ifaces,
+                                                          per_sec=1.2)
+                    busy = next((p for p in probed
+                                 if p.get("probe_packets", 0) > 0), None)
+                    if busy:
+                        interface = busy["name"]
+                if not interface:
+                    def physical(i: dict) -> bool:
+                        text = (i["name"] + " " + i["description"]).lower()
+                        if any(k in text for k in ("loopback", "vmware", "virtual",
+                                                   "wan miniport", "bluetooth",
+                                                   "蓝牙", "hyper-v", "tap")):
+                            return False
+                        return any(k in text for k in ("ethernet", "以太网", "wi-fi",
+                                                       "wlan", "wireless", "realtek",
+                                                       "intel", "broadcom"))
+                    phys = [i for i in sc_ifaces if physical(i)]
+                    interface = (phys[0]["name"] if phys else
+                                 (sc_ifaces[0]["name"] if sc_ifaces else None))
+            if not interface:
+                return {"ok": False, "error": "scapy 未发现可用网卡(请检查 Npcap)。"}
+            self.source_label = f"scapy 抓包: {interface}"
+            self.last_auto_iface = interface
+            from .scapylib import ScapySniffer
+            self.source = ScapySniffer(
+                iface=interface, save_dir=str(DEFAULT_SAVE_DIR),
+                bpf_filter=self.cap_filter,
+                on_record=self._on_record, on_error=self._on_error)
+        elif engine == "tshark":
             # 传统模式(可选): 依赖 Wireshark/tshark + Npcap
             if self.tshark is None:
                 return {"ok": False,
@@ -315,7 +363,8 @@ class LiveMonitor:
             "display_filter": self.display_filter,
             "tools": {"tshark": str(self.tshark) if self.tshark else None,
                       "wireshark": str(self.wireshark) if self.wireshark else None,
-                      "tshark_version": tshark_version(self.tshark)},
+                      "tshark_version": tshark_version(self.tshark),
+                      "scapy": scapylib.version() if self._scapy_ok() else None},
             "interfaces": self.ifaces,
             "save_dir": str(DEFAULT_SAVE_DIR),
         }
@@ -481,6 +530,12 @@ class LiveMonitor:
             {"id": "app", "name": "ArkIDS 应用", "ok": True,
              "detail": f"版本 {__version__} · Python {__import__('sys').version.split()[0]}",
              "help": ""},
+            {"id": "pylib", "name": "Python 抓包库(scapy, 经 Npcap/wpcap)",
+             "ok": self._scapy_ok(),
+             "detail": (f"scapy {scapylib.version()} 已加载(优先已安装, 否则用内嵌源码)")
+             if self._scapy_ok()
+             else ("不可用: " + (scapylib._load_error or "未找到 scapy/Npcap")),
+             "fix": "" if self._scapy_ok() else "安装 Npcap(随 Wireshark), 或检查驱动"},
             {"id": "sniffer", "name": "内置抓包引擎(自研原始套接字)",
              "ok": True,
              "detail": ("Windows 原始套接字(SIO_RCVALL)/Linux AF_PACKET 已内置, "
@@ -520,7 +575,8 @@ class LiveMonitor:
                    x["id"] in ("priv", "storage")]
         return {"items": items, "ok_count": ok_n, "total": len(items),
                 "all_ok": ok_n == len(items),
-                "live_ready": bool(is_admin),
+                "live_ready": bool((self._scapy_ok() and self._npcap_present())
+                                   or is_admin),
                 "diagnostic": " | ".join(f"{x['id']}={'OK' if x['ok'] else 'WARN'}"
                                          for x in items)}
 

@@ -1,5 +1,16 @@
 # 版本历史
 
+## [0.11.0] - 2025
+
+### 采用 Python 流量库(scapy)实现抓包(默认引擎)
+- 新增 src/arkids/scapylib.py: 用 scapy(经 Npcap/wpcap.dll)实现实时抓包; 自动把
+  Wireshark/Npcap 目录加入 DLL 搜索路径; 统一输出 PacketRecord 并落盘 pcap
+- 引擎优先级: auto = scapy → tshark → 自研嗅探; GUI/CLI 均可直接选择 scapy
+- 内嵌 scapy 2.7.0 源码(src/arkids/_vendor, GPL-2.0, 保留 LICENSE); 已安装时优先系统版
+- 自动选卡: 借 tshark 探测有流量的 NPF 接口名交给 scapy, 否则按物理网卡特征挑选
+- 自检新增第 9 项 Python 抓包库(scapy); 实测 scapy 引擎 live 抓到真实包(本机 30 包)
+- 打包: spec 内置 _vendor, 冻结版同样具备 Python 库抓包能力; 测试 37 项通过
+
 ## [0.10.0] - 2025
 
 ### 原生桌面 GUI 取代 WebUI 为主界面

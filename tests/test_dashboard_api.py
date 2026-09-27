@@ -113,10 +113,11 @@ class TestDashboardApi(unittest.TestCase):
 
     def test_selfcheck_and_logs_endpoints(self):
         sc = self._get("/api/selfcheck")
-        self.assertEqual(sc["total"], 8)
+        self.assertEqual(sc["total"], 9)
         self.assertTrue(sc["diagnostic"].startswith("app=OK"))
         kinds = {x["id"] for x in sc["items"]}
         self.assertIn("sniffer", kinds)
+        self.assertIn("pylib", kinds)
         self.assertIn("parser", kinds)
         self.assertIn("priv", kinds)
         logs = self._get("/api/logs?kind=detections&n=50")

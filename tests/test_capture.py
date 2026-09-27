@@ -211,5 +211,24 @@ class TestRawIpAndSnifferWriter(unittest.TestCase):
         cleanup_tmp("rawt")
 
 
+class TestScapyLibrary(unittest.TestCase):
+    """Python 抓包库(scapy)集成: 加载与报文转换。"""
+
+    def test_scapy_available_and_record(self):
+        from arkids import scapylib  # noqa: PLC0415
+        if not scapylib.available():
+            self.skipTest("scapy/Npcap 环境不可用")
+        sc = scapylib.load_scapy()
+        pkt = (sc.Ether(src="00:11:22:33:44:55", dst="66:77:88:99:aa:bb") /
+               sc.IP(src="192.168.9.9", dst="10.1.1.1") /
+               sc.TCP(sport=51000, dport=443, flags="SA"))
+        rec = scapylib.to_record(pkt)
+        self.assertEqual((rec.src, rec.dst, rec.proto),
+                         ("192.168.9.9", "10.1.1.1", "tcp"))
+        self.assertEqual((rec.sport, rec.dport), ("51000", "443"))
+        self.assertIn("S", rec.flags)
+        self.assertIsInstance(scapylib.list_interfaces(), list)
+
+
 if __name__ == "__main__":
     unittest.main()
