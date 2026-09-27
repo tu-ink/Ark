@@ -135,6 +135,10 @@ def main() -> int:
 
     # 3) 构建(目录版 + wheel)
     os.environ["PYTHONPATH"] = str(ROOT / "src")
+    vendor = ROOT / "src" / "arkids" / "_vendor" / "scapy" / "VERSION"
+    if not vendor.exists():
+        print("[*] 未发现内嵌 scapy, 尝试按需获取(scripts/fetch_scapy.py)")
+        sh([PY, str(ROOT / "scripts" / "fetch_scapy.py")], timeout=600)
     rc, _ = sh([PY, str(ROOT / "scripts" / "make_wheel.py")])
     if rc != 0:
         print("!! wheel 构建失败")

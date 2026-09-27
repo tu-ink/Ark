@@ -16,6 +16,9 @@ data/nslkdd/
 models/*.joblib
 run/
 
+# ---- 第三方内嵌源码(体积大/GPL, 按需获取: python scripts/fetch_scapy.py) ----
+src/arkids/_vendor/
+
 # ---- IDE / 系统 ----
 .idea/
 .vscode/
