@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netflow-monitor"
+version = "2.1.0"
+description = "基于 Isolation Forest 的网络流量监测系统（控制台 / 全屏 TUI，无 Web 依赖）"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+keywords = ["network", "traffic", "monitor", "anomaly-detection", "isolation-forest", "scapy"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Education",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Networking :: Monitoring",
+]
+
+# 运行期依赖：抓包 + 数据处理 + 机器学习。
+# 界面（ANSI TUI）与并发（threading/queue）、存储（sqlite3）、参数解析（argparse）
+# 全部使用标准库，不引入任何 Web 框架或第三方 TUI 库。
+dependencies = [
+    "scapy>=2.5.0",
+    "pandas>=1.3.0",
+    "numpy>=1.21.0",
+    "scikit-learn>=1.0.0",
+    "joblib>=1.1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pyflakes>=3.0.0"]
+
+[project.scripts]
+netflow-monitor = "netflow.cli:main"
+
+[project.urls]
+Documentation = "https://www.unb.ca/cic/datasets/ids-2017.html"
+
+[tool.setuptools]
+packages = ["netflow", "netflow.ui", "netflow.training"]
+
+[tool.setuptools.package-data]
+netflow = ["py.typed"]

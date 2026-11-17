@@ -1,0 +1,51 @@
+# ---------------- Python ----------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# ---------------- 虚拟环境 ----------------
+.venv/
+venv/
+env/
+ENV/
+
+# ---------------- 运行产物 ----------------
+# 数据库（首次运行自动创建）
+traffic_monitor.db
+traffic_monitor.db-shm
+traffic_monitor.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# 模型与示例流量（首次运行 --demo 或 train_model 时自动生成）
+model.joblib
+*.joblib
+sample.pcap
+*.pcap
+
+# 日志与导出
+*.log
+logs/
+stats.csv
+features.csv
+
+# 测试临时目录
+.test-tmp/
+.pytest_cache/
+_b*.db
+
+# ---------------- 编辑器 / 系统 ----------------
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
